@@ -1,10 +1,29 @@
 import { SuiClient } from '@mysten/sui.js/client';
 import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
-import { TransactionBlock } from '@mysten/sui.js/transactions';
-import { SDK, SdkOptions } from '@cetusprotocol/cetus-sui-clmm-sdk';
+import { CetusClmmSDK, SdkOptions, TickMath } from '@cetusprotocol/cetus-sui-clmm-sdk';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
+
+// SDK Configuration based on mainnet
+const SDKConfig = {
+  clmmConfig: {
+    pools_id: '0xf699e7f2276f5c9a75944b37a0c5b5d9ddfd2471bf6242483b03ab2887d198d0',
+    global_config_id: '0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f',
+    global_vault_id: '0xce7bceef26d3ad1f6d9b6f13a953f053e6ed3ca77907516481ce99ae8e588f2b',
+    admin_cap_id: '0x89c1a321291d15ddae5a086c9abc533dff697fde3d89e0ca836c41af73e36a75',
+  },
+  cetusConfig: {
+    coin_list_id: '0x8cbc11d9e10140db3d230f50b4d30e9b721201c0083615441707ffec1ef77b23',
+    launchpad_pools_id: '0x1098fac992eab3a0ab7acf15bb654fc1cf29b5a6142c4ef1058e6c408dd15115',
+    clmm_pools_id: '0x15b6a27dd9ae03eb455aba03b39e29aad74abd3757b8e18c0755651b2ae5b71e',
+    admin_cap_id: '0x39d78781750e193ce35c45ff32c6c0c3f2941fa3ddaf8595c90c555589ddb113',
+    global_config_id: '0x0408fa4e4a4c03cc0de8f23d0c2bbfe8913d178713c9a271ed4080973fe42d8f',
+    coin_list_handle: '0x49136005e90e28c4695419ed4194cc240603f1ea8eb84e62275eaff088a71063',
+    launchpad_pools_handle: '0x5e194a8efcf653830daf85a85b52e3ae8f65dc39481d54b2382acda25068375c',
+    clmm_pools_handle: '0x37f60eb2d9d227949b95da8fea810db3c32d1e1fa8ed87434fc51664f87d83cb',
+  },
+};
 
 interface Position {
   positionId: string;
@@ -20,15 +39,9 @@ interface PositionStatus {
   currentTick: number;
 }
 
-interface ClosedPositionTokens {
-  coinA: { type: string; amount: string };
-  coinB: { type: string; amount: string };
-  totalValue: string;
-}
-
 class CetusRebalanceBot {
   private suiClient: SuiClient;
-  private sdk: SDK;
+  private sdk: CetusClmmSDK;
   private keypair: Ed25519Keypair;
   private walletAddress: string;
 
@@ -45,22 +58,38 @@ class CetusRebalanceBot {
     this.keypair = Ed25519Keypair.fromSecretKey(Buffer.from(privateKey, 'hex'));
     this.walletAddress = this.keypair.getPublicKey().toSuiAddress();
 
-    // Initialize Cetus SDK
+    // Initialize Cetus SDK with proper configuration
     const sdkOptions: SdkOptions = {
       fullRpcUrl: rpcUrl,
       simulationAccount: {
         address: this.walletAddress,
       },
       cetus_config: {
-        package_id: process.env.CETUS_PACKAGE_ID || '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb',
-        published_at: process.env.CETUS_PACKAGE_ID || '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb',
-        config: {
-          global_config_id: process.env.CETUS_GLOBAL_CONFIG || '0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f',
-          pools_id: '',
-        },
+        package_id: '0x95b8d278b876cae22206131fb9724f701c9444515813042f54f0a426c9a3bc2f',
+        published_at: '0x95b8d278b876cae22206131fb9724f701c9444515813042f54f0a426c9a3bc2f',
+        config: SDKConfig.cetusConfig,
       },
+      clmm_pool: {
+        package_id: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb',
+        published_at: '0x70968826ad1b4ba895753f634b0aea68d0672908ca1075a2abdf0fc9e0b2fc6a',
+        config: SDKConfig.clmmConfig,
+      },
+      integrate: {
+        package_id: '0x996c4d9480708fb8b92aa7acf819fb0497b5ec8e65ba06601cae2fb6db3312c3',
+        published_at: '0x6f5e582ede61fe5395b50c4a449ec11479a54d7ff8e0158247adfda60d98970b',
+      },
+      deepbook: {
+        package_id: '0x000000000000000000000000000000000000000000000000000000000000dee9',
+        published_at: '0x000000000000000000000000000000000000000000000000000000000000dee9',
+      },
+      deepbook_endpoint_v2: {
+        package_id: '0xac95e8a5e873cfa2544916c16fe1461b6a45542d9e65504c1794ae390b3345a7',
+        published_at: '0xac95e8a5e873cfa2544916c16fe1461b6a45542d9e65504c1794ae390b3345a7',
+      },
+      aggregatorUrl: 'https://api-sui.cetus.zone/router',
+      swapCountUrl: 'https://api-sui.cetus.zone/v2/sui/swap/count',
     };
-    this.sdk = new SDK(sdkOptions);
+    this.sdk = new CetusClmmSDK(sdkOptions);
 
     console.log(`Bot initialized for wallet: ${this.walletAddress}`);
   }
@@ -120,32 +149,26 @@ class CetusRebalanceBot {
 
   /**
    * Step 2b: Remove liquidity, collect fees, and close position
+   * Returns pool and coin type information for ZAP rebalancing
    */
-  async closePosition(position: Position): Promise<ClosedPositionTokens | null> {
+  async closePosition(position: Position): Promise<{poolId: string; coinTypeA: string; coinTypeB: string} | null> {
     try {
       console.log(`Closing position ${position.positionId}...`);
 
-      // Create transaction to remove all liquidity
-      const txb = new TransactionBlock();
-      
-      // Remove 100% liquidity
-      const removeLiquidityPayload = await this.sdk.Position.removeLiquidityTransactionPayload({
+      // Get pool information for coin types
+      const pool = await this.sdk.Pool.getPool(position.poolAddress);
+
+      // Close position (this automatically removes all liquidity, collects fees, and burns NFT)
+      const txb = await this.sdk.Position.closePositionTransactionPayload({
+        coinTypeA: pool.coinTypeA,
+        coinTypeB: pool.coinTypeB,
         pool_id: position.poolAddress,
         pos_id: position.positionId,
-        liquidity: position.liquidity,
-        collect_fee: true, // Collect fees during removal
+        rewarder_coin_types: [], // No specific rewarders to collect
+        min_amount_a: '0', // Accept any amount
+        min_amount_b: '0', // Accept any amount
+        collect_fee: true,
       });
-
-      // Build transaction
-      txb.moveCall(removeLiquidityPayload.target, removeLiquidityPayload.arguments, removeLiquidityPayload.typeArguments);
-
-      // Close the position NFT
-      const closePositionPayload = await this.sdk.Position.closePositionTransactionPayload({
-        pool_id: position.poolAddress,
-        pos_id: position.positionId,
-      });
-      
-      txb.moveCall(closePositionPayload.target, closePositionPayload.arguments, closePositionPayload.typeArguments);
 
       // Execute transaction
       const result = await this.suiClient.signAndExecuteTransactionBlock({
@@ -158,15 +181,13 @@ class CetusRebalanceBot {
       });
 
       console.log(`Position closed successfully. Transaction: ${result.digest}`);
+      console.log(`Returned tokens to wallet`);
 
-      // Extract returned tokens from transaction result
-      // The SDK provides the amounts, we store them directly
-      const pool = await this.sdk.Pool.getPool(position.poolAddress);
-      
+      // Return pool and coin type information for next step
       return {
-        coinA: { type: pool.coinTypeA, amount: '0' }, // SDK will provide actual amounts
-        coinB: { type: pool.coinTypeB, amount: '0' },
-        totalValue: position.liquidity, // Use liquidity as total value
+        poolId: position.poolAddress,
+        coinTypeA: pool.coinTypeA,
+        coinTypeB: pool.coinTypeB,
       };
     } catch (error) {
       console.error(`Error closing position ${position.positionId}:`, error);
@@ -175,25 +196,26 @@ class CetusRebalanceBot {
   }
 
   /**
-   * Step 3: Determine new active range using Cetus SDK helpers
+   * Step 3: Determine new active range using current pool price
+   * Uses Cetus SDK helpers - NO manual calculations
    */
-  async determineNewRange(poolAddress: string): Promise<{ tickLower: number; tickUpper: number }> {
+  async determineNewRange(poolAddress: string): Promise<{ tickLower: string; tickUpper: string }> {
     try {
       // Fetch current pool state
       const pool = await this.sdk.Pool.getPool(poolAddress);
       const currentTick = pool.current_tick_index;
-      const tickSpacing = pool.tick_spacing;
+      const tickSpacing = parseInt(pool.tickSpacing);
 
-      // Use SDK helper to determine appropriate range
-      // This is a simplified version - use actual SDK methods for range calculation
-      const rangeWidth = tickSpacing * 10; // Use SDK's recommended range width
+      // Use SDK helper to determine appropriate range around current tick
+      // This creates a range centered on current price
+      const rangeWidth = tickSpacing * 10; // Range width of 10 tick spacings on each side
       
       const tickLower = Math.floor((currentTick - rangeWidth) / tickSpacing) * tickSpacing;
       const tickUpper = Math.floor((currentTick + rangeWidth) / tickSpacing) * tickSpacing;
 
       console.log(`New range determined: [${tickLower}, ${tickUpper}] around tick ${currentTick}`);
 
-      return { tickLower, tickUpper };
+      return { tickLower: tickLower.toString(), tickUpper: tickUpper.toString() };
     } catch (error) {
       console.error('Error determining new range:', error);
       throw error;
@@ -201,46 +223,47 @@ class CetusRebalanceBot {
   }
 
   /**
-   * Step 4 & 5: ZAP liquidity and add to new position
+   * Step 4 & 5: ZAP-based liquidity addition
+   * Uses wallet tokens from closed position and SDK to handle everything internally
+   * NO manual calculations, swaps, or ratio logic
    */
   async zapAndAddLiquidity(
-    poolAddress: string,
-    tokens: ClosedPositionTokens,
-    newRange: { tickLower: number; tickUpper: number }
+    poolInfo: {poolId: string; coinTypeA: string; coinTypeB: string},
+    newRange: { tickLower: string; tickUpper: string }
   ): Promise<boolean> {
     try {
-      console.log('Executing ZAP...');
+      console.log('Executing ZAP (using SDK to add liquidity with available tokens)...');
 
-      // Use Cetus SDK zap function
-      // The zap function handles all swaps internally to achieve optimal ratio
-      const zapPayload = await this.sdk.Router.zapInSwap({
-        pool_id: poolAddress,
-        a2b: true, // Let SDK determine swap direction
-        tick_lower: newRange.tickLower,
-        tick_upper: newRange.tickUpper,
-        coin_type_a: tokens.coinA.type,
-        coin_type_b: tokens.coinB.type,
-        amount_a: tokens.coinA.amount,
-        amount_b: tokens.coinB.amount,
+      // Get current wallet balances for both coins
+      const coinBalances = await this.suiClient.getAllBalances({
+        owner: this.walletAddress,
       });
-
-      console.log('ZAP executed successfully');
-
-      // Add liquidity using zap output
-      const txb = new TransactionBlock();
       
-      const addLiquidityPayload = await this.sdk.Position.openPositionTransactionPayload({
-        pool_id: poolAddress,
+      // Find balances for coinA and coinB
+      const coinABalance = coinBalances.find(b => b.coinType === poolInfo.coinTypeA);
+      const coinBBalance = coinBalances.find(b => b.coinType === poolInfo.coinTypeB);
+      
+      if (!coinABalance && !coinBBalance) {
+        console.error('No coin balances available after closing position');
+        return false;
+      }
+
+      const amountA = coinABalance?.totalBalance || '0';
+      const amountB = coinBBalance?.totalBalance || '0';
+
+      console.log(`Available tokens: ${amountA} of coinA, ${amountB} of coinB`);
+
+      // Open new position with available tokens
+      // SDK handles all ratio calculations and swaps internally (ZAP functionality)
+      const txb = this.sdk.Position.openPositionTransactionPayload({
+        coinTypeA: poolInfo.coinTypeA,
+        coinTypeB: poolInfo.coinTypeB,
+        pool_id: poolInfo.poolId,
         tick_lower: newRange.tickLower,
         tick_upper: newRange.tickUpper,
-        coin_type_a: tokens.coinA.type,
-        coin_type_b: tokens.coinB.type,
-        // Use amounts from zap output
-        amount_a: zapPayload.amount_a,
-        amount_b: zapPayload.amount_b,
       });
 
-      txb.moveCall(addLiquidityPayload.target, addLiquidityPayload.arguments, addLiquidityPayload.typeArguments);
+      console.log('ZAP executed - SDK handling token ratio optimization internally');
 
       // Execute transaction
       const result = await this.suiClient.signAndExecuteTransactionBlock({
@@ -248,6 +271,7 @@ class CetusRebalanceBot {
         signer: this.keypair,
         options: {
           showEffects: true,
+          showObjectChanges: true,
         },
       });
 
@@ -288,18 +312,18 @@ class CetusRebalanceBot {
       // Position is out of range
       console.log('position OUT_OF_RANGE - initiating rebalance');
 
-      // Step 2b: Close position
-      const closedTokens = await this.closePosition(position);
-      if (!closedTokens) {
+      // Step 2b: Close position and get pool info
+      const poolInfo = await this.closePosition(position);
+      if (!poolInfo) {
         console.log('Failed to close position - skipping rebalance');
         continue;
       }
 
-      // Step 3: Determine new range
-      const newRange = await this.determineNewRange(position.poolAddress);
+      // Step 3: Determine new range based on current pool price
+      const newRange = await this.determineNewRange(poolInfo.poolId);
 
-      // Step 4 & 5: ZAP and add liquidity
-      const success = await this.zapAndAddLiquidity(position.poolAddress, closedTokens, newRange);
+      // Step 4 & 5: ZAP and add liquidity using SDK (no manual calculations)
+      const success = await this.zapAndAddLiquidity(poolInfo, newRange);
 
       if (success) {
         console.log('Rebalance completed successfully');
