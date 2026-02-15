@@ -81,6 +81,7 @@ REBALANCE_INTERVAL_MS=60000
 | `CETUS_PACKAGE_ID` | Cetus protocol package ID | See `.env.example` |
 | `CETUS_GLOBAL_CONFIG` | Cetus global config object ID | See `.env.example` |
 | `REBALANCE_INTERVAL_MS` | Time between rebalance checks (milliseconds) | `60000` (1 minute) |
+| `MAINNET_TEST_MODE` | Enable safe single-shot test mode | `false` |
 
 ### Important Notes
 
@@ -90,15 +91,72 @@ REBALANCE_INTERVAL_MS=60000
 
 ## Usage
 
-### Build the project:
+### Normal Mode (Continuous Monitoring)
+
+Build the project:
 ```bash
 npm run build
 ```
 
-### Start the bot:
+Start the bot:
 ```bash
 npm start
 ```
+
+The bot will continuously monitor your positions and rebalance when needed.
+
+### MAINNET SAFE TEST MODE (Recommended for First Run)
+
+For safe testing on mainnet with real transactions:
+
+1. Edit `.env` and set:
+```bash
+MAINNET_TEST_MODE=true
+```
+
+2. Build and run:
+```bash
+npm run build
+npm start
+```
+
+**What happens in test mode:**
+- 🧪 Processes **ONLY the FIRST position** found
+- 🔄 Executes **ONLY ONE rebalance cycle**
+- ⚡ **Exits immediately** after completion
+- ❌ **Aborts on any error**
+
+**Test mode outcomes:**
+
+✅ **Position IN_RANGE:**
+```
+✓ MAINNET TEST: position IN_RANGE
+No rebalance needed. Exiting safely.
+Exit code: 0
+```
+
+⚠️ **Position OUT_OF_RANGE (Successful Rebalance):**
+```
+⚠️  MAINNET TEST: position OUT_OF_RANGE
+Initiating rebalance...
+Closing position...
+Executing ZAP...
+✅ MAINNET TEST SUCCESS
+New position ID: 0x...
+Rebalance completed successfully. Exiting.
+Exit code: 0
+```
+
+❌ **Error During Rebalance:**
+```
+❌ MAINNET TEST FAILED: Could not close position
+Exit code: 1
+```
+
+**After successful test:**
+1. Verify the new position in your wallet
+2. Check transactions on Sui explorer
+3. Set `MAINNET_TEST_MODE=false` for continuous monitoring
 
 ### Development mode (with auto-reload):
 ```bash
