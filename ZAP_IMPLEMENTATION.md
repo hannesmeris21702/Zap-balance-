@@ -18,33 +18,36 @@ After examining the Cetus CLMM SDK v4.0.0, we found that:
 ### Issue
 The bot was failing to detect the Position NFT after creation during ZAP execution:
 - Position NFT transaction would succeed
-- Bot waited 5 seconds for RPC indexing
-- Bot queried positions by pool ID and tick range
+- Transaction created 2 objects but Position NFT could not be parsed
+- Bot fell back to querying positions by pool ID and tick range
 - **FAILED**: Could not find the newly created position despite multiple positions existing in the pool
 
-### Root Cause
-The original implementation relied on:
-1. Waiting for RPC indexing (5 second delay)
-2. Querying all positions for the pool
-3. Filtering by exact tick range match
-
-This approach was unreliable because:
-- RPC indexing delay could vary based on network conditions
-- Query results might not immediately include the just-created position
-- No direct parsing of transaction effects to get the Position NFT ID
+### Root Cause Analysis
+The implementation had two issues:
+1. **Type matching was too strict**: Used exact string match for Position NFT type
+   - Code expected: `{PACKAGE_ID}::position::Position`
+   - Actual type: `{PACKAGE_ID}::position::Position<CoinTypeA, CoinTypeB>` (with generic type parameters)
+   - The exact match failed, causing fallback to query method
+2. **Fallback query method was unreliable**:
+   - Waited 5 seconds for RPC indexing
+   - Queried all positions for the pool
+   - Filtered by exact tick range match
+   - RPC indexing delay could vary based on network conditions
+   - Query results might not immediately include the just-created position
 
 ### Solution
-**Parse transaction effects directly** to extract the Position NFT ID:
-1. After `openPositionTransactionPayload()` transaction confirms, parse `objectChanges`
-2. Find the created object with exact type match: `{VALIDATED_PACKAGE_ID}::position::Position`
-3. Use the extracted Position NFT ID directly (no waiting, no querying)
+**Fixed type matching to handle generic type parameters**:
+1. Changed from exact string match (`===`) to prefix match (`.startsWith()`)
+2. Now matches: `{PACKAGE_ID}::position::Position` with or without generic parameters
+3. Added debug logging to show all created object types and IDs for transparency
 4. Keep fallback query logic for robustness if direct parsing fails
 
 ### Security Improvements
-- **Exact type matching**: Prevents false positives from malicious contracts
+- **Prefix type matching**: Prevents false positives from malicious contracts while supporting generics
 - **Package ID validation**: Only accepts Position NFTs from the verified Cetus package
 - **Undefined checks**: Logs warnings for unexpected transaction structures
 - **Defense in depth**: Multiple layers of validation before accepting a Position NFT
+- **Debug logging**: All created object types are logged for audit trail
 
 ### Our ZAP Implementation Approach
 
