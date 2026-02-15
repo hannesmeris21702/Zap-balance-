@@ -10,7 +10,7 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 // A value of 10 means the position will span 10 tick spacings on each side of current price
 // This provides balanced concentration: not too narrow (frequent rebalancing) or too wide (reduced capital efficiency)
 
-// SDK Configuration based on mainnet
+// SDK Configuration based on mainnet - from official Cetus SDK examples
 const SDKConfig = {
   clmmConfig: {
     pools_id: '0xf699e7f2276f5c9a75944b37a0c5b5d9ddfd2471bf6242483b03ab2887d198d0',
@@ -56,24 +56,6 @@ class CetusRebalanceBot {
     const rpcUrl = process.env.SUI_RPC_URL || 'https://fullnode.mainnet.sui.io:443';
     this.suiClient = new SuiClient({ url: rpcUrl });
 
-    // Validate required configuration - CETUS_CLMM_PACKAGE_ID and CETUS_GLOBAL_CONFIG_ID
-    const cetusClmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID;
-    const cetusGlobalConfigId = process.env.CETUS_GLOBAL_CONFIG_ID;
-    
-    if (!cetusClmmPackageId || cetusClmmPackageId.trim() === '') {
-      console.error('❌ FATAL: CETUS_CLMM_PACKAGE_ID is not set or empty in environment');
-      console.error('   Please set CETUS_CLMM_PACKAGE_ID in your .env file');
-      console.error('   Example: CETUS_CLMM_PACKAGE_ID=0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb');
-      throw new Error('CETUS_CLMM_PACKAGE_ID is required for Sui MAINNET');
-    }
-    
-    if (!cetusGlobalConfigId || cetusGlobalConfigId.trim() === '') {
-      console.error('❌ FATAL: CETUS_GLOBAL_CONFIG_ID is not set or empty in environment');
-      console.error('   Please set CETUS_GLOBAL_CONFIG_ID in your .env file');
-      console.error('   Example: CETUS_GLOBAL_CONFIG_ID=0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f');
-      throw new Error('CETUS_GLOBAL_CONFIG_ID is required for Sui MAINNET');
-    }
-
     // Initialize keypair from private key
     const privateKey = process.env.WALLET_PRIVATE_KEY;
     if (!privateKey) {
@@ -85,12 +67,10 @@ class CetusRebalanceBot {
     // Check if MAINNET_TEST_MODE is enabled
     this.isTestMode = process.env.MAINNET_TEST_MODE === 'true';
 
-    // Update SDKConfig with values from environment variables
-    // This ensures we use the explicitly configured package IDs for ALL operations
-    SDKConfig.clmmConfig.global_config_id = cetusGlobalConfigId;
-
-    // Initialize Cetus SDK with explicit MAINNET configuration
-    // DO NOT auto-detect - use only the configured package IDs
+    // Initialize Cetus SDK with mainnet configuration
+    // CRITICAL FIX: published_at MUST equal package_id to avoid version mismatch errors
+    // The previous version had published_at = 0x70968826ad1b4ba895753f634b0aea68d0672908ca1075a2abdf0fc9e0b2fc6a
+    // which caused MoveAbort error 10 in checked_package_version
     const sdkOptions: SdkOptions = {
       fullRpcUrl: rpcUrl,
       simulationAccount: {
@@ -102,8 +82,8 @@ class CetusRebalanceBot {
         config: SDKConfig.cetusConfig,
       },
       clmm_pool: {
-        package_id: cetusClmmPackageId,
-        published_at: '0x70968826ad1b4ba895753f634b0aea68d0672908ca1075a2abdf0fc9e0b2fc6a',
+        package_id: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb',
+        published_at: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb', // FIXED: now matches package_id
         config: SDKConfig.clmmConfig,
       },
       integrate: {
@@ -128,8 +108,8 @@ class CetusRebalanceBot {
     this.sdk.senderAddress = this.walletAddress;
 
     console.log(`Bot initialized for wallet: ${this.walletAddress}`);
-    console.log(`Cetus CLMM Package ID: ${cetusClmmPackageId}`);
-    console.log(`Cetus Global Config ID: ${cetusGlobalConfigId}`);
+    console.log(`Cetus CLMM Package ID: 0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb`);
+    console.log(`Using Cetus SDK with mainnet configuration (version mismatch fixed)`);
     if (this.isTestMode) {
       console.log('⚠️  MAINNET TEST MODE ENABLED - Will process ONE position and exit');
     }
