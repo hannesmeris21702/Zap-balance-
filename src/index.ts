@@ -405,10 +405,18 @@ class CetusRebalanceBot {
    * 3. Adding liquidity to the position using SDK's createAddLiquidityPayload()
    * 4. The Cetus smart contracts automatically handle token ratio optimization
    * 
+   * CRITICAL ZAP SUCCESS CRITERIA:
+   * - Transaction success does NOT guarantee Position NFT was minted with liquidity
+   * - Position NFT can be created with ZERO liquidity if:
+   *   - Token amounts are too small (rounding to zero)
+   *   - Tick range is invalid relative to current price
+   *   - Minimum liquidity threshold not met
+   * - We MUST verify Position NFT exists with liquidity > 0 after transaction
+   * 
    * This approach:
    * - Uses SDK functions only (as required)
    * - Avoids manual calculations (as required)
-   * - Lets smart contracts optimize token usage (ZAP-like behavior)
+   * - Validates Position NFT creation and liquidity > 0
    * - Keeps code simple and maintainable
    * 
    * NO manual calculations, swaps, or ratio logic as per requirements.
@@ -418,7 +426,51 @@ class CetusRebalanceBot {
     newRange: { tickLower: string; tickUpper: string }
   ): Promise<string | null> {
     try {
-      console.log('Executing ZAP (using SDK to add liquidity with available tokens)...');
+      console.log('\n=== ZAP EXECUTION START ===');
+      
+      // Fetch pool data for pre-ZAP validation
+      let pool: any;
+      let currentTick: number;
+      let tickLower: number;
+      let tickUpper: number;
+      
+      try {
+        pool = await this.sdk.Pool.getPool(poolInfo.poolId);
+        currentTick = pool.current_tick_index;
+        tickLower = parseInt(newRange.tickLower);
+        tickUpper = parseInt(newRange.tickUpper);
+      } catch (error) {
+        console.error('❌ ERROR: Failed to fetch pool data for validation');
+        console.error('Details:', error);
+        return null;
+      }
+      
+      // TASK 4: Pre-ZAP Validation - Ensure valid range for liquidity mint
+      console.log('\n--- Pre-ZAP Validation ---');
+      console.log(`Current tick: ${currentTick}`);
+      console.log(`Tick range: [${tickLower}, ${tickUpper}]`);
+      
+      if (tickLower >= tickUpper) {
+        console.error('❌ ABORT: Invalid tick range - tickLower must be < tickUpper');
+        console.error(`Got: tickLower=${tickLower}, tickUpper=${tickUpper}`);
+        return null;
+      }
+      
+      // CRITICAL: Current tick must be within or near the range for liquidity to be minted
+      // If current price is far outside the range, no liquidity can be added
+      // Note: Positions CAN be created outside range, but they'll have zero liquidity initially
+      // We log a warning but allow it - the validation will happen after opening
+      if (currentTick < tickLower) {
+        console.log('⚠️  Warning: Current tick is BELOW the position range');
+        console.log('   Position will be created but may have limited liquidity');
+        console.log('   Only coinA will be used (price below range)');
+      } else if (currentTick > tickUpper) {
+        console.log('⚠️  Warning: Current tick is ABOVE the position range');
+        console.log('   Position will be created but may have limited liquidity');
+        console.log('   Only coinB will be used (price above range)');
+      } else {
+        console.log('✓ Current tick is within range - both tokens will be used');
+      }
 
       // Get current wallet balances for both coins
       const coinBalances = await this.suiClient.getAllBalances({
@@ -430,74 +482,60 @@ class CetusRebalanceBot {
       const coinBBalance = coinBalances.find(b => b.coinType === poolInfo.coinTypeB);
       
       if (!coinABalance && !coinBBalance) {
-        console.error('No coin balances available after closing position');
+        console.error('❌ ERROR: No coin balances available after closing position');
         return null;
       }
 
       const amountA = coinABalance?.totalBalance || '0';
       const amountB = coinBBalance?.totalBalance || '0';
 
-      console.log(`Available tokens: ${amountA} of coinA, ${amountB} of coinB`);
-
-      // Validate token balances before opening position NFT
-      // Get pool to check current tick relative to the new range
-      let currentTick: number;
-      let tickLower: number;
-      let tickUpper: number;
-      
-      try {
-        const pool = await this.sdk.Pool.getPool(poolInfo.poolId);
-        currentTick = pool.current_tick_index;
-        tickLower = parseInt(newRange.tickLower);
-        tickUpper = parseInt(newRange.tickUpper);
-      } catch (error) {
-        console.error('ERROR: Failed to fetch pool data for validation');
-        console.error('Could not validate token requirements before opening position');
-        console.error('Details:', error);
-        return null;
-      }
-      
-      console.log(`Current tick: ${currentTick}, New range: [${tickLower}, ${tickUpper}]`);
+      // TASK 5: Logging before ZAP
+      console.log('\n--- Available Tokens ---');
+      console.log(`Token A: ${amountA}`);
+      console.log(`Token B: ${amountB}`);
       
       // Validate token requirements based on tick position
+      console.log('\n--- Token Requirement Validation ---');
       // When current price is in range: need BOTH tokens
       // When current price is below range: need only coinA
       // When current price is above range: need only coinB
       if (currentTick >= tickLower && currentTick <= tickUpper) {
         // Current price is IN the new range - need both tokens
         if (BigInt(amountA) === 0n || BigInt(amountB) === 0n) {
-          console.error('ERROR: Current price is within the new position range, but wallet has insufficient token balance');
+          console.error('❌ ERROR: Current price is within the new position range, but wallet has insufficient token balance');
           console.error(`Required: Both coinA and coinB`);
           console.error(`Available: coinA = ${amountA}, coinB = ${amountB}`);
           console.error('This would result in creating an empty or severely underfunded position NFT');
-          console.error('Aborting to prevent creating a position without liquidity');
+          console.error('ABORT: Preventing creation of position without liquidity');
           return null;
         }
-        console.log('✓ Validation passed: Both tokens available for in-range position');
+        console.log('✓ Both tokens available for in-range position');
       } else if (currentTick < tickLower) {
         // Current price is BELOW the new range - need only coinA
         if (BigInt(amountA) === 0n) {
-          console.error('ERROR: Current price is below the new position range, but wallet has no coinA');
+          console.error('❌ ERROR: Current price is below the new position range, but wallet has no coinA');
           console.error(`Required: coinA (current tick ${currentTick} < range lower ${tickLower})`);
           console.error(`Available: coinA = ${amountA}`);
           console.error('This would result in creating an empty position NFT');
-          console.error('Aborting to prevent creating a position without liquidity');
+          console.error('ABORT: Preventing creation of position without liquidity');
           return null;
         }
-        console.log('✓ Validation passed: coinA available for below-range position');
+        console.log('✓ CoinA available for below-range position');
       } else {
         // Current price is ABOVE the new range - need only coinB
         if (BigInt(amountB) === 0n) {
-          console.error('ERROR: Current price is above the new position range, but wallet has no coinB');
+          console.error('❌ ERROR: Current price is above the new position range, but wallet has no coinB');
           console.error(`Required: coinB (current tick ${currentTick} > range upper ${tickUpper})`);
           console.error(`Available: coinB = ${amountB}`);
           console.error('This would result in creating an empty position NFT');
-          console.error('Aborting to prevent creating a position without liquidity');
+          console.error('ABORT: Preventing creation of position without liquidity');
           return null;
         }
-        console.log('✓ Validation passed: coinB available for above-range position');
+        console.log('✓ CoinB available for above-range position');
       }
 
+      console.log('\n--- Opening Position NFT ---');
+      console.log('\n--- Opening Position NFT ---');
       // Step 1: Open new position NFT with desired range
       const openTxb = this.sdk.Position.openPositionTransactionPayload({
         coinTypeA: poolInfo.coinTypeA,
@@ -519,10 +557,10 @@ class CetusRebalanceBot {
         },
       });
 
-      console.log(`Position NFT created. Transaction: ${openResult.digest}`);
+      console.log(`Position NFT transaction sent. Digest: ${openResult.digest}`);
 
-      // Wait for transaction to be confirmed
-      console.log('Waiting for transaction confirmation...');
+      // TASK 2: Wait for transaction confirmation and parse effects
+      console.log('\n--- Waiting for Transaction Confirmation ---');
       await this.suiClient.waitForTransactionBlock({
         digest: openResult.digest,
         options: {
@@ -530,25 +568,36 @@ class CetusRebalanceBot {
           showObjectChanges: true,
         },
       });
-      console.log('Transaction confirmed.');
+      console.log('✓ Transaction confirmed');
 
-      // Extract position ID from transaction result with retry logic
+      // TASK 2: Extract position ID from transaction result by detecting Position NFT type
       let newPositionId: string | null = null;
       
-      // First attempt: Extract from transaction objectChanges
+      console.log('\n--- Detecting Position NFT from Transaction Effects ---');
+      // Parse transaction effects to find newly created Position NFT
       const createdObjects = openResult.objectChanges?.filter(
         (change: any) => change.type === 'created'
       );
-      const positionObject = createdObjects?.find((obj: any) => 
-        obj.objectType?.includes('position::Position')
-      );
       
-      if (positionObject) {
-        newPositionId = (positionObject as any).objectId;
-        console.log(`New position ID extracted from transaction: ${newPositionId}`);
-      } else {
-        // Second attempt: Retry with exponential backoff to fetch created objects
-        console.log('Position NFT not immediately found in objectChanges, retrying...');
+      if (createdObjects && createdObjects.length > 0) {
+        console.log(`Found ${createdObjects.length} created object(s) in transaction`);
+        
+        // Look for Position NFT by type (contains 'position::Position')
+        for (const obj of createdObjects) {
+          const objType = (obj as any).objectType;
+          console.log(`  - Object type: ${objType}`);
+          
+          if (objType && objType.includes('position::Position')) {
+            newPositionId = (obj as any).objectId;
+            console.log(`✓ Position NFT detected: ${newPositionId}`);
+            break;
+          }
+        }
+      }
+      
+      if (!newPositionId) {
+        // Retry with exponential backoff to fetch created objects
+        console.log('⚠️  Position NFT not found in initial transaction effects, retrying...');
         
         const maxRetries = 5;
         const baseDelayMs = 1000; // 1 second
@@ -571,29 +620,58 @@ class CetusRebalanceBot {
           const createdObjs = txResult.objectChanges?.filter(
             (change: any) => change.type === 'created'
           );
-          const posObj = createdObjs?.find((obj: any) => 
-            obj.objectType?.includes('position::Position')
-          );
           
-          if (posObj) {
-            newPositionId = (posObj as any).objectId;
-            console.log(`New position ID found on attempt ${attempt}: ${newPositionId}`);
-            break;
+          if (createdObjs) {
+            for (const obj of createdObjs) {
+              const objType = (obj as any).objectType;
+              if (objType && objType.includes('position::Position')) {
+                newPositionId = (obj as any).objectId;
+                console.log(`✓ Position NFT found on attempt ${attempt}: ${newPositionId}`);
+                break;
+              }
+            }
           }
+          
+          if (newPositionId) break;
         }
       }
       
       if (!newPositionId) {
-        console.error('Failed to find created position NFT after retries');
+        console.error('❌ FAILED: No Position NFT detected after retries');
         console.error('Transaction digest:', openResult.digest);
-        console.error('Please check the transaction on Sui explorer to verify if position was created');
+        console.error('ABORT: ZAP produced zero liquidity — no position minted');
         return null;
       }
 
-      console.log(`New position ID confirmed: ${newPositionId}`);
+      // TASK 2 & TASK 3: Verify Position NFT actually has liquidity > 0
+      console.log('\n--- Verifying Position NFT Liquidity ---');
+      let positionData: any;
+      try {
+        // Query the position to verify it exists and has liquidity
+        positionData = await this.sdk.Position.getPositionById(newPositionId);
+        console.log(`Position liquidity: ${positionData.liquidity}`);
+        
+        if (!positionData.liquidity || BigInt(positionData.liquidity) === 0n) {
+          console.error('❌ FAILED: Position NFT exists but has ZERO liquidity');
+          console.error('This can happen when:');
+          console.error('  - Token amounts are too small (rounding to zero)');
+          console.error('  - Tick range is invalid relative to current price');
+          console.error('  - Minimum liquidity threshold not met');
+          console.error('ABORT: ZAP produced zero liquidity — no position minted');
+          return null;
+        }
+        
+        console.log('✓ Position NFT verified with liquidity > 0');
+      } catch (error) {
+        console.error('❌ ERROR: Failed to fetch position info for verification');
+        console.error('Details:', error);
+        console.error('ABORT: Cannot verify position liquidity');
+        return null;
+      }
 
       // Step 2: Add liquidity to the position using available tokens
       // SDK will handle token ratio optimization
+      console.log('\n--- Adding Liquidity to Position ---');
       const addLiqTxb = await this.sdk.Position.createAddLiquidityPayload({
         coinTypeA: poolInfo.coinTypeA,
         coinTypeB: poolInfo.coinTypeB,
@@ -611,8 +689,6 @@ class CetusRebalanceBot {
       // Set gas budget for transaction
       addLiqTxb.setGasBudget(GAS_BUDGET_MIST);
 
-      console.log('ZAP executed - SDK handling liquidity addition with token optimization');
-
       const addLiqResult = await this.suiClient.signAndExecuteTransactionBlock({
         transactionBlock: addLiqTxb,
         signer: this.keypair,
@@ -622,11 +698,83 @@ class CetusRebalanceBot {
         },
       });
 
-      console.log(`Liquidity added successfully. Transaction: ${addLiqResult.digest}`);
+      console.log(`Liquidity addition transaction sent. Digest: ${addLiqResult.digest}`);
+      
+      // Wait for liquidity addition to confirm
+      await this.suiClient.waitForTransactionBlock({
+        digest: addLiqResult.digest,
+        options: {
+          showEffects: true,
+          showObjectChanges: true,
+        },
+      });
+      console.log('✓ Liquidity addition confirmed');
+
+      // TASK 2: Verify liquidity was actually added by querying position again
+      console.log('\n--- Final Position Verification ---');
+      let finalPositionData: any;
+      try {
+        finalPositionData = await this.sdk.Position.getPositionById(newPositionId);
+        const finalLiquidity = BigInt(finalPositionData.liquidity);
+        
+        console.log(`Final position liquidity: ${finalLiquidity.toString()}`);
+        
+        if (finalLiquidity === 0n) {
+          console.error('❌ FAILED: Liquidity addition completed but position still has ZERO liquidity');
+          console.error('ABORT: ZAP produced zero liquidity — no position minted');
+          return null;
+        }
+        
+        console.log('✓ Liquidity successfully added to position');
+      } catch (error) {
+        console.error('❌ ERROR: Failed to verify final position state');
+        console.error('Details:', error);
+        console.error('ABORT: Cannot verify position liquidity');
+        return null;
+      }
+
+      // TASK 3: Query owned objects to confirm position exists with correct pool and range
+      console.log('\n--- Confirming Position Ownership ---');
+      try {
+        const ownedPositions = await this.sdk.Position.getPositionList(this.walletAddress);
+        const matchingPosition = ownedPositions.find(
+          (pos: any) => 
+            pos.pos_object_id === newPositionId &&
+            pos.pool === poolInfo.poolId &&
+            pos.tick_lower_index === tickLower &&
+            pos.tick_upper_index === tickUpper
+        );
+        
+        if (!matchingPosition) {
+          console.error('❌ WARNING: Position not found in owned positions list');
+          console.error('This may indicate a synchronization delay');
+          console.error('Position ID:', newPositionId);
+        } else {
+          console.log('✓ Position confirmed in wallet with correct pool and range');
+        }
+      } catch (error) {
+        console.error('⚠️  Warning: Could not query owned positions for final confirmation');
+        console.error('Details:', error);
+        // Don't fail here - we've already verified the position exists and has liquidity
+      }
+
+      // TASK 5: Final success logging
+      console.log('\n=== ZAP EXECUTION COMPLETE ===');
+      console.log('SUCCESS SUMMARY:');
+      console.log(`  Transaction digest: ${addLiqResult.digest}`);
+      console.log(`  Position NFT found: true`);
+      console.log(`  Position ID: ${newPositionId}`);
+      console.log(`  Liquidity minted: true`);
+      console.log(`  Final liquidity: ${finalPositionData.liquidity}`);
+      console.log(`  Pool: ${poolInfo.poolId}`);
+      console.log(`  Tick range: [${tickLower}, ${tickUpper}]`);
+      console.log('============================\n');
+      
       return newPositionId;
     } catch (error) {
-      console.error('ZAP failed:', error);
-      console.log('Aborting - will not add liquidity without successful zap');
+      console.error('\n❌ ZAP EXECUTION FAILED');
+      console.error('Error details:', error);
+      console.log('ABORT: Will not proceed without successful ZAP');
       return null;
     }
   }
@@ -694,17 +842,19 @@ class CetusRebalanceBot {
       const newPositionId = await this.zapAndAddLiquidity(poolInfo, newRange);
 
       if (newPositionId) {
+        console.log('\n✅ REBALANCE COMPLETED SUCCESSFULLY');
+        console.log(`New position ID: ${newPositionId}`);
         if (this.isTestMode) {
           console.log('✅ MAINNET TEST SUCCESS');
-          console.log(`New position ID: ${newPositionId}`);
           console.log('Rebalance completed successfully. Exiting.');
           process.exit(0);
         }
-        console.log('Rebalance completed successfully');
       } else {
-        console.error('Rebalance aborted due to zap failure');
+        console.error('\n❌ REBALANCE ABORTED');
+        console.error('Reason: ZAP failed or produced zero liquidity');
+        console.error('No position was created or liquidity was not added');
         if (this.isTestMode) {
-          console.error('❌ MAINNET TEST FAILED: ZAP failed');
+          console.error('❌ MAINNET TEST FAILED: ZAP failed or produced zero liquidity');
           process.exit(1);
         }
       }
