@@ -10,7 +10,7 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 // A value of 10 means the position will span 10 tick spacings on each side of current price
 // This provides balanced concentration: not too narrow (frequent rebalancing) or too wide (reduced capital efficiency)
 
-const DEFAULT_GAS_BUDGET = 500000000; // 0.5 SUI - gas budget for transactions (in MIST, 1 SUI = 1e9 MIST)
+const DEFAULT_GAS_BUDGET_MIST = 500000000; // 0.5 SUI - gas budget for transactions (in MIST, 1 SUI = 1e9 MIST)
 
 // Regex pattern for extracting package ID from Move object type (format: package_id::module::Type)
 const PACKAGE_ID_PATTERN = /^(0x[a-fA-F0-9]+)::/;
@@ -326,7 +326,7 @@ class CetusRebalanceBot {
       });
 
       // Set gas budget for transaction
-      txb.setGasBudget(DEFAULT_GAS_BUDGET);
+      txb.setGasBudget(DEFAULT_GAS_BUDGET_MIST);
 
       // Execute transaction
       const result = await this.suiClient.signAndExecuteTransactionBlock({
@@ -441,7 +441,7 @@ class CetusRebalanceBot {
       });
 
       // Set gas budget for transaction
-      openTxb.setGasBudget(DEFAULT_GAS_BUDGET);
+      openTxb.setGasBudget(DEFAULT_GAS_BUDGET_MIST);
 
       const openResult = await this.suiClient.signAndExecuteTransactionBlock({
         transactionBlock: openTxb,
@@ -487,7 +487,7 @@ class CetusRebalanceBot {
       });
 
       // Set gas budget for transaction
-      addLiqTxb.setGasBudget(DEFAULT_GAS_BUDGET);
+      addLiqTxb.setGasBudget(DEFAULT_GAS_BUDGET_MIST);
 
       console.log('ZAP executed - SDK handling liquidity addition with token optimization');
 
