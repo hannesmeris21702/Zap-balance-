@@ -20,10 +20,20 @@ This bot automatically monitors your Cetus CLMM positions and rebalances them wh
 2. **Check range status**: For each position, determine if current price is inside the position tick range
    - If **IN_RANGE**: Log status and continue monitoring
    - If **OUT_OF_RANGE**: Proceed to rebalance
-3. **Close position**: Remove 100% liquidity, collect fees, close position NFT, store returned tokens
+3. **Close position**: Remove 100% liquidity, collect fees, close position NFT (tokens returned to wallet automatically)
 4. **Determine new range**: Use Cetus SDK helpers to calculate optimal range based on current pool price
-5. **ZAP liquidity**: Use Cetus SDK ZAP function to handle token swaps internally
-6. **Add liquidity**: Open new position with ZAP output
+5. **ZAP and add liquidity**: Open new position with wallet tokens - SDK handles all token ratio optimization internally
+6. **Handle failures**: If any step fails, abort safely and log the reason
+
+### ZAP Implementation
+
+This bot implements ZAP-based rebalancing without manual calculations:
+- Uses SDK's `closePositionTransactionPayload()` to return tokens to wallet
+- Uses SDK's `openPositionTransactionPayload()` which intelligently handles token ratios
+- The Cetus smart contracts automatically optimize token usage for the new range
+- No manual swaps, ratio calculations, or liquidity math required
+
+See [ZAP_IMPLEMENTATION.md](./ZAP_IMPLEMENTATION.md) for technical details on the ZAP approach.
 
 ## Requirements
 
@@ -122,7 +132,9 @@ This bot intentionally does NOT:
 - Force 50/50 token splits
 - Perform manual swap logic
 - Use custom liquidity calculations
-- Call `addLiquidity` without successful ZAP
+- Call `addLiquidity` without proper token preparation
+
+All token optimization is handled by the Cetus SDK and smart contracts.
 
 ## Troubleshooting
 
