@@ -439,6 +439,59 @@ class CetusRebalanceBot {
 
       console.log(`Available tokens: ${amountA} of coinA, ${amountB} of coinB`);
 
+      // Validate token balances before opening position NFT
+      // Get pool to check current tick relative to the new range
+      const pool = await this.sdk.Pool.getPool(poolInfo.poolId);
+      const currentTick = pool.current_tick_index;
+      const tickLower = parseInt(newRange.tickLower);
+      const tickUpper = parseInt(newRange.tickUpper);
+      
+      // Determine required tokens based on price position relative to range
+      const isCurrentTickInRange = currentTick >= tickLower && currentTick <= tickUpper;
+      const isCurrentTickBelowRange = currentTick < tickLower;
+      const isCurrentTickAboveRange = currentTick > tickUpper;
+      
+      console.log(`Current tick: ${currentTick}, New range: [${tickLower}, ${tickUpper}]`);
+      
+      // Validate token requirements based on tick position
+      // When current price is in range: need BOTH tokens
+      // When current price is below range: need only coinA
+      // When current price is above range: need only coinB
+      if (isCurrentTickInRange) {
+        // Current price is IN the new range - need both tokens
+        if (BigInt(amountA) === 0n || BigInt(amountB) === 0n) {
+          console.error('ERROR: Current price is within the new position range, but wallet has insufficient token balance');
+          console.error(`Required: Both coinA and coinB`);
+          console.error(`Available: coinA = ${amountA}, coinB = ${amountB}`);
+          console.error('This would result in creating an empty or severely underfunded position NFT');
+          console.error('Aborting to prevent creating a position without liquidity');
+          return null;
+        }
+        console.log('✓ Validation passed: Both tokens available for in-range position');
+      } else if (isCurrentTickBelowRange) {
+        // Current price is BELOW the new range - need only coinA
+        if (BigInt(amountA) === 0n) {
+          console.error('ERROR: Current price is below the new position range, but wallet has no coinA');
+          console.error(`Required: coinA (current tick ${currentTick} < range lower ${tickLower})`);
+          console.error(`Available: coinA = ${amountA}`);
+          console.error('This would result in creating an empty position NFT');
+          console.error('Aborting to prevent creating a position without liquidity');
+          return null;
+        }
+        console.log('✓ Validation passed: coinA available for below-range position');
+      } else if (isCurrentTickAboveRange) {
+        // Current price is ABOVE the new range - need only coinB
+        if (BigInt(amountB) === 0n) {
+          console.error('ERROR: Current price is above the new position range, but wallet has no coinB');
+          console.error(`Required: coinB (current tick ${currentTick} > range upper ${tickUpper})`);
+          console.error(`Available: coinB = ${amountB}`);
+          console.error('This would result in creating an empty position NFT');
+          console.error('Aborting to prevent creating a position without liquidity');
+          return null;
+        }
+        console.log('✓ Validation passed: coinB available for above-range position');
+      }
+
       // Step 1: Open new position NFT with desired range
       const openTxb = this.sdk.Position.openPositionTransactionPayload({
         coinTypeA: poolInfo.coinTypeA,
