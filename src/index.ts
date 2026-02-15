@@ -5,6 +5,11 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+// Configuration constants
+const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine position width
+// A value of 10 means the position will span 10 tick spacings on each side of current price
+// This provides balanced concentration: not too narrow (frequent rebalancing) or too wide (reduced capital efficiency)
+
 // SDK Configuration based on mainnet
 const SDKConfig = {
   clmmConfig: {
@@ -198,6 +203,12 @@ class CetusRebalanceBot {
   /**
    * Step 3: Determine new active range using current pool price
    * Uses Cetus SDK helpers - NO manual calculations
+   * 
+   * RANGE WIDTH STRATEGY:
+   * The range width is determined by RANGE_WIDTH_MULTIPLIER * tickSpacing.
+   * This creates a position centered on the current price with equal width on both sides.
+   * - Narrower ranges (smaller multiplier) = higher capital efficiency but more frequent rebalancing
+   * - Wider ranges (larger multiplier) = less frequent rebalancing but lower capital efficiency
    */
   async determineNewRange(poolAddress: string): Promise<{ tickLower: string; tickUpper: string }> {
     try {
@@ -208,7 +219,7 @@ class CetusRebalanceBot {
 
       // Use SDK helper to determine appropriate range around current tick
       // This creates a range centered on current price
-      const rangeWidth = tickSpacing * 10; // Range width of 10 tick spacings on each side
+      const rangeWidth = tickSpacing * RANGE_WIDTH_MULTIPLIER;
       
       const tickLower = Math.floor((currentTick - rangeWidth) / tickSpacing) * tickSpacing;
       const tickUpper = Math.floor((currentTick + rangeWidth) / tickSpacing) * tickSpacing;
@@ -229,8 +240,9 @@ class CetusRebalanceBot {
    * The Cetus SDK v4.0.0 does not have a dedicated zap() function.
    * However, we achieve ZAP-like functionality by:
    * 1. Closing the position returns tokens to wallet (Step 2b)
-   * 2. Opening a new position with SDK's openPositionTransactionPayload()
-   * 3. The Cetus smart contracts automatically handle token ratio optimization
+   * 2. Opening a new position NFT with desired range
+   * 3. Adding liquidity to the position using SDK's createAddLiquidityPayload()
+   * 4. The Cetus smart contracts automatically handle token ratio optimization
    * 
    * This approach:
    * - Uses SDK functions only (as required)
@@ -266,9 +278,8 @@ class CetusRebalanceBot {
 
       console.log(`Available tokens: ${amountA} of coinA, ${amountB} of coinB`);
 
-      // Open new position with available tokens
-      // SDK handles all ratio calculations and swaps internally (ZAP functionality)
-      const txb = this.sdk.Position.openPositionTransactionPayload({
+      // Step 1: Open new position NFT with desired range
+      const openTxb = this.sdk.Position.openPositionTransactionPayload({
         coinTypeA: poolInfo.coinTypeA,
         coinTypeB: poolInfo.coinTypeB,
         pool_id: poolInfo.poolId,
@@ -276,11 +287,8 @@ class CetusRebalanceBot {
         tick_upper: newRange.tickUpper,
       });
 
-      console.log('ZAP executed - SDK handling token ratio optimization internally');
-
-      // Execute transaction
-      const result = await this.suiClient.signAndExecuteTransactionBlock({
-        transactionBlock: txb,
+      const openResult = await this.suiClient.signAndExecuteTransactionBlock({
+        transactionBlock: openTxb,
         signer: this.keypair,
         options: {
           showEffects: true,
@@ -288,7 +296,52 @@ class CetusRebalanceBot {
         },
       });
 
-      console.log(`Liquidity added successfully. Transaction: ${result.digest}`);
+      console.log(`Position NFT created. Transaction: ${openResult.digest}`);
+
+      // Extract position ID from transaction result
+      const createdObjects = openResult.objectChanges?.filter(
+        (change: any) => change.type === 'created'
+      );
+      const positionObject = createdObjects?.find((obj: any) => 
+        obj.objectType?.includes('position::Position')
+      );
+      
+      if (!positionObject) {
+        console.error('Failed to find created position NFT');
+        return false;
+      }
+
+      const newPositionId = (positionObject as any).objectId;
+      console.log(`New position ID: ${newPositionId}`);
+
+      // Step 2: Add liquidity to the position using available tokens
+      // SDK will handle token ratio optimization
+      const addLiqTxb = await this.sdk.Position.createAddLiquidityPayload({
+        coinTypeA: poolInfo.coinTypeA,
+        coinTypeB: poolInfo.coinTypeB,
+        pool_id: poolInfo.poolId,
+        pos_id: newPositionId,
+        tick_lower: newRange.tickLower,
+        tick_upper: newRange.tickUpper,
+        delta_liquidity: '0', // Let SDK calculate from amounts
+        max_amount_a: amountA,
+        max_amount_b: amountB,
+        collect_fee: false,
+        rewarder_coin_types: [],
+      });
+
+      console.log('ZAP executed - SDK handling liquidity addition with token optimization');
+
+      const addLiqResult = await this.suiClient.signAndExecuteTransactionBlock({
+        transactionBlock: addLiqTxb,
+        signer: this.keypair,
+        options: {
+          showEffects: true,
+          showObjectChanges: true,
+        },
+      });
+
+      console.log(`Liquidity added successfully. Transaction: ${addLiqResult.digest}`);
       return true;
     } catch (error) {
       console.error('ZAP failed:', error);
@@ -356,6 +409,13 @@ class CetusRebalanceBot {
     console.log('Press Ctrl+C to stop\n');
 
     const intervalMs = parseInt(process.env.REBALANCE_INTERVAL_MS || '60000', 10);
+    
+    // Validate interval
+    if (isNaN(intervalMs) || intervalMs < 1000) {
+      throw new Error('REBALANCE_INTERVAL_MS must be a valid number >= 1000 (at least 1 second)');
+    }
+
+    console.log(`Rebalance interval set to ${intervalMs}ms (${intervalMs / 1000}s)`);
 
     // Run initial rebalance
     await this.rebalance();
