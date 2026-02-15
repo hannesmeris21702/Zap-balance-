@@ -618,7 +618,6 @@ class CetusRebalanceBot {
             // SECURITY: Match Position NFT type to prevent matching malicious contracts
             // Cetus Position NFTs have type pattern: {PACKAGE_ID}::position::Position
             // They may include generic type parameters, so we check if the type starts with the expected prefix
-            const expectedPositionTypePrefix = `${this.clmmPackageId}::position::Position`;
             if (objectType.startsWith(expectedPositionTypePrefix)) {
               newPositionId = change.objectId;
               console.log(`✓ Position NFT found in transaction effects: ${newPositionId}`);
