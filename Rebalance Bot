@@ -1,0 +1,41 @@
+write the rebalance logic to be SIMPLE and ZAP-BASED.
+Do NOT add any calculations or custom math.
+Only follow steps.
+
+Logic flow:
+
+1. Check wallet for positions with liquidity
+2. For each position:
+   - Check if current price is inside the position range
+   - If position is IN RANGE:
+       - Do nothing
+       - Continue monitoring
+   - If position is OUT OF RANGE:
+       - Remove 100% liquidity
+       - Close the position
+       - Store returned tokens and total returned value
+
+3. Determine new active range based on current price
+
+4. ZAP liquidity:
+   - Use SDK zap function for the new range
+   - Input tokens = tokens returned from close_position
+   - Input value = total value returned from close_position
+   - Let SDK decide swap internally
+
+5. Add liquidity:
+   - Add liquidity using zap output
+   - Amount added MUST equal closed position value
+   - Do not manually adjust token ratios
+
+Rules:
+- Do NOT calculate ratios
+- Do NOT force 50/50
+- Do NOT call addLiquidity without zap
+- If zap fails, abort safely and log error
+- No position ID required at startup
+
+Logging (simple):
+- position status (IN_RANGE / OUT_OF_RANGE)
+- zap executed
+- liquidity added
