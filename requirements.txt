@@ -1,0 +1,11 @@
+# Python dependencies for Simple ZAP-Based Rebalance Bot
+
+# Note: Add your specific SDK package here
+# For example:
+# uniswap-python>=0.7.0
+# web3>=6.0.0
+
+# These are common dependencies that might be needed:
+# web3>=6.0.0
+# eth-account>=0.10.0
+# python-dotenv>=1.0.0
