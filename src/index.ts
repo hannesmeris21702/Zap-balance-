@@ -12,7 +12,13 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 
 // Gas budget for transactions - configurable via environment variable
 // Default: 500000000 MIST (0.5 SUI)
-const DEFAULT_GAS_BUDGET_MIST = parseInt(process.env.GAS_BUDGET_MIST || '500000000', 10);
+const GAS_BUDGET_MIST = (() => {
+  const value = parseInt(process.env.GAS_BUDGET_MIST || '500000000', 10);
+  if (isNaN(value) || value <= 0) {
+    throw new Error(`Invalid GAS_BUDGET_MIST: must be a positive number (got: ${process.env.GAS_BUDGET_MIST})`);
+  }
+  return value;
+})();
 
 // Regex pattern for extracting package ID from Move object type (format: package_id::module::Type)
 const PACKAGE_ID_PATTERN = /^(0x[a-fA-F0-9]+)::/;
@@ -328,7 +334,7 @@ class CetusRebalanceBot {
       });
 
       // Set gas budget for transaction
-      txb.setGasBudget(DEFAULT_GAS_BUDGET_MIST);
+      txb.setGasBudget(GAS_BUDGET_MIST);
 
       // Execute transaction
       const result = await this.suiClient.signAndExecuteTransactionBlock({
@@ -443,7 +449,7 @@ class CetusRebalanceBot {
       });
 
       // Set gas budget for transaction
-      openTxb.setGasBudget(DEFAULT_GAS_BUDGET_MIST);
+      openTxb.setGasBudget(GAS_BUDGET_MIST);
 
       const openResult = await this.suiClient.signAndExecuteTransactionBlock({
         transactionBlock: openTxb,
@@ -489,7 +495,7 @@ class CetusRebalanceBot {
       });
 
       // Set gas budget for transaction
-      addLiqTxb.setGasBudget(DEFAULT_GAS_BUDGET_MIST);
+      addLiqTxb.setGasBudget(GAS_BUDGET_MIST);
 
       console.log('ZAP executed - SDK handling liquidity addition with token optimization');
 
