@@ -1,11 +1,22 @@
 # Python dependencies for Simple ZAP-Based Rebalance Bot
 
-# Note: Add your specific SDK package here
-# For example:
-# uniswap-python>=0.7.0
-# web3>=6.0.0
+# Standard library packages used:
+# - logging (built-in)
+# - typing (built-in)
+# - dataclasses (built-in)
+# - enum (built-in)
+# - unittest (built-in, for tests)
 
-# These are common dependencies that might be needed:
+# TODO: Add your specific SDK package here
+# The bot requires an SDK with the following methods:
+#   - get_positions(wallet_address)
+#   - remove_liquidity(position_id, liquidity_percentage)
+#   - calculate_range_from_current_tick(current_tick, tick_spacing)
+#   - zap_liquidity(...)
+#   - add_liquidity_from_zap(zap_output, lower_tick, upper_tick)
+#
+# Example SDK packages (uncomment and adjust version as needed):
+# uniswap-python>=0.7.0
 # web3>=6.0.0
 # eth-account>=0.10.0
 # python-dotenv>=1.0.0
