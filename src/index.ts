@@ -595,9 +595,10 @@ class CetusRebalanceBot {
         console.log(`Found ${confirmedTx.objectChanges.length} object changes in transaction`);
         
         // Look for a 'created' object that matches the Cetus Position NFT type
-        // Cetus Position NFTs have type: {PACKAGE_ID}::position::Position
+        // Cetus Position NFTs have type pattern: {PACKAGE_ID}::position::Position
+        // They may include generic type parameters like: {PACKAGE_ID}::position::Position<CoinA, CoinB>
         // SECURITY: Verify the object type starts with the validated Cetus package ID
-        const expectedPositionType = `${this.clmmPackageId}::position::Position`;
+        const expectedPositionTypePrefix = `${this.clmmPackageId}::position::Position`;
         
         for (const change of confirmedTx.objectChanges) {
           if (change.type === 'created') {
