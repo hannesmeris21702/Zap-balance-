@@ -1,0 +1,30 @@
+{
+  "name": "cetus-clmm-rebalance-bot",
+  "version": "1.0.0",
+  "description": "Simple ZAP-based rebalance bot for Cetus CLMM on Sui Network",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "keywords": [
+    "sui",
+    "cetus",
+    "clmm",
+    "rebalance",
+    "zap"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@cetusprotocol/cetus-sui-clmm-sdk": "^4.0.0",
+    "@mysten/sui.js": "^0.54.0",
+    "dotenv": "^16.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0"
+  }
+}
