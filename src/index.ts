@@ -10,6 +10,18 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 // A value of 10 means the position will span 10 tick spacings on each side of current price
 // This provides balanced concentration: not too narrow (frequent rebalancing) or too wide (reduced capital efficiency)
 
+// RPC indexing delay after creating a new position - configurable via environment variable
+// Default: 5000ms (5 seconds) - recommended by Cetus SDK to allow RPC nodes to index new positions
+// Minimum: 1000ms (1 second) to ensure sufficient indexing time
+// Adjust if experiencing position detection issues due to network latency
+const RPC_INDEXING_DELAY_MS = (() => {
+  const value = parseInt(process.env.RPC_INDEXING_DELAY_MS || '5000', 10);
+  if (isNaN(value) || value < 1000) {
+    throw new Error(`Invalid RPC_INDEXING_DELAY_MS: must be at least 1000ms (got: ${value})`);
+  }
+  return value;
+})();
+
 // Gas budget for transactions - configurable via environment variable
 // Default: 500000000 MIST (0.5 SUI)
 const GAS_BUDGET_MIST = (() => {
@@ -569,71 +581,67 @@ class CetusRebalanceBot {
       });
       console.log('✓ Transaction confirmed');
 
-      // TASK 2: Query wallet-owned objects to find Position NFT
-      // Note: Cetus SDK does NOT guarantee Position NFT appears in tx.objectChanges
-      // Position NFT may only be discoverable via wallet object query
+      // TASK 2: Query wallet-owned objects to find Position NFT using official Cetus SDK pattern
+      // Official pattern from Cetus SDK: After tx confirms, wait 5s for RPC indexing, then query with pool filter
       let newPositionId: string | null = null;
-      let lastError: any = null;
       
-      console.log('\n--- Detecting Position NFT from Wallet-Owned Objects ---');
+      console.log('\n--- Detecting Position NFT (Official Cetus SDK Pattern) ---');
+      console.log(`Waiting ${RPC_INDEXING_DELAY_MS}ms for RPC indexing...`);
+      await new Promise(resolve => setTimeout(resolve, RPC_INDEXING_DELAY_MS));
       
-      const maxRetries = 5;
-      const baseDelayMs = 1000; // 1 second
-      
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        if (attempt > 1) {
-          // Exponential backoff for retry attempts 2-5: 1s, 2s, 4s, 8s, 16s
-          const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-          console.log(`Retry attempt ${attempt}/${maxRetries} after ${delayMs}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-        } else {
-          console.log(`Querying wallet-owned positions (attempt ${attempt}/${maxRetries})...`);
-        }
+      try {
+        // Query wallet-owned Position NFTs filtered by pool ID (official Cetus SDK method)
+        console.log(`Querying positions for pool: ${poolInfo.poolId}`);
+        const ownedPositions = await this.sdk.Position.getPositionList(
+          this.walletAddress,
+          [poolInfo.poolId]  // Filter by pool ID as per official SDK pattern
+        );
         
-        try {
-          // Query wallet-owned Position NFTs
-          const ownedPositions = await this.sdk.Position.getPositionList(this.walletAddress);
+        // Filter positions by exact tick_lower and tick_upper from config
+        // Also verify pool ID to ensure correct position if wallet has multiple positions with identical ticks
+        const matchingPositions = ownedPositions.filter(
+          (pos: any) => 
+            pos.pool === poolInfo.poolId &&
+            pos.tick_lower_index === tickLower &&
+            pos.tick_upper_index === tickUpper
+        );
+        
+        if (matchingPositions.length > 0) {
+          // Sort by position object ID to select the newest position
+          // NOTE: Sui object IDs are 32-byte values represented as fixed-length hex strings
+          // (66 characters: "0x" + 64 hex digits). For fixed-length hex strings, standard string
+          // comparison correctly orders them by their numeric value (equivalent to numeric comparison).
+          // This assumes Sui object IDs increase monotonically with creation time, which is
+          // the current behavior in Sui. The Position type does not include a creation timestamp,
+          // so object ID sorting is the recommended approach for identifying the newest position.
+          matchingPositions.sort((a, b) => {
+            // Standard string comparison for fixed-length hex strings
+            if (a.pos_object_id < b.pos_object_id) return -1;
+            if (a.pos_object_id > b.pos_object_id) return 1;
+            return 0;
+          });
           
-          // Filter positions by pool_id, tick_lower, and tick_upper
-          // Find the newest position matching our criteria
-          const matchingPositions = ownedPositions.filter(
-            (pos: any) => 
-              pos.pool === poolInfo.poolId &&
-              pos.tick_lower_index === tickLower &&
-              pos.tick_upper_index === tickUpper
-          );
-          
-          if (matchingPositions.length > 0) {
-            // Sort by position object ID to select the newest position
-            // In Sui, object IDs are deterministically generated and newer objects
-            // have lexicographically higher IDs. This ensures we select the position
-            // that was just created rather than an older one with the same parameters.
-            matchingPositions.sort((a: any, b: any) => {
-              return a.pos_object_id.localeCompare(b.pos_object_id);
-            });
-            
-            newPositionId = matchingPositions[matchingPositions.length - 1].pos_object_id;
-            console.log(`✓ Position NFT found in wallet: ${newPositionId}`);
-            console.log(`  Matching positions found: ${matchingPositions.length}`);
-            break;
-          }
-          
-          // Clear error on successful query
-          lastError = null;
-        } catch (error) {
-          lastError = error;
-          console.log(`⚠️  Error querying positions on attempt ${attempt}:`, error);
-          // Continue to retry
+          // Select the last element (highest ID = newest position)
+          // Since we verified matchingPositions.length > 0, the last index is guaranteed to exist
+          newPositionId = matchingPositions[matchingPositions.length - 1].pos_object_id;
+          console.log(`✓ Position NFT found: ${newPositionId}`);
+          console.log(`  Pool: ${poolInfo.poolId}`);
+          console.log(`  Tick range: [${tickLower}, ${tickUpper}]`);
+          console.log(`  Matching positions found: ${matchingPositions.length}`);
+        } else {
+          console.error('❌ FAILED: No Position NFT found matching tick range');
+          console.error(`  Pool: ${poolInfo.poolId}`);
+          console.error(`  Expected tick range: [${tickLower}, ${tickUpper}]`);
+          console.error(`  Positions found in pool: ${ownedPositions.length}`);
+          console.error('Transaction digest:', openResult.digest);
+          console.error('ABORT: No Position NFT was created with the expected parameters');
+          return null;
         }
-      }
-      
-      if (!newPositionId) {
-        console.error('❌ FAILED: No Position NFT found in wallet after retries');
+      } catch (error) {
+        console.error('❌ ERROR: Failed to query positions using Cetus SDK');
+        console.error('Details:', error);
         console.error('Transaction digest:', openResult.digest);
-        if (lastError) {
-          console.error('Last error during position query:', lastError);
-        }
-        console.error('ABORT: No Position NFT was created in transaction');
+        console.error('ABORT: Cannot detect Position NFT');
         return null;
       }
 
