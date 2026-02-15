@@ -2,6 +2,26 @@
 
 All notable changes to the Cetus CLMM Rebalance Bot project.
 
+## [1.1.1] - 2026-02-15
+
+### Fixed
+- **CRITICAL: Fixed MoveAbort error 10 in checked_package_version**
+  - Root cause: `published_at` address did not match `package_id` for the CLMM pool module
+  - Old value: `published_at: '0x70968826ad1b4ba895753f634b0aea68d0672908ca1075a2abdf0fc9e0b2fc6a'`
+  - New value: `published_at: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb'` (now matches package_id)
+  - This fix prevents the "Dry run failed, could not automatically determine a budget" error
+  - Transactions will now successfully execute on mainnet
+
+### Changed
+- Simplified `.env.example` by removing manual `CETUS_CLMM_PACKAGE_ID` and `CETUS_GLOBAL_CONFIG_ID` variables
+- Updated README.md to reflect that manual package IDs are no longer needed
+- Added troubleshooting section for the version mismatch error
+
+### Documentation
+- Updated README with troubleshooting section for MoveAbort error 10
+- Clarified that bot uses built-in Cetus mainnet configuration
+- Added inline code comments explaining the fix
+
 ## [1.1.0] - 2026-02-15
 
 ### Added - MAINNET SAFE TEST MODE
