@@ -10,6 +10,16 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 // A value of 10 means the position will span 10 tick spacings on each side of current price
 // This provides balanced concentration: not too narrow (frequent rebalancing) or too wide (reduced capital efficiency)
 
+// Gas budget for transactions - configurable via environment variable
+// Default: 500000000 MIST (0.5 SUI)
+const GAS_BUDGET_MIST = (() => {
+  const value = parseInt(process.env.GAS_BUDGET_MIST || '500000000', 10);
+  if (isNaN(value) || value <= 0) {
+    throw new Error(`Invalid GAS_BUDGET_MIST: must be a positive number (got: ${process.env.GAS_BUDGET_MIST})`);
+  }
+  return value;
+})();
+
 // Regex pattern for extracting package ID from Move object type (format: package_id::module::Type)
 const PACKAGE_ID_PATTERN = /^(0x[a-fA-F0-9]+)::/;
 
@@ -323,6 +333,9 @@ class CetusRebalanceBot {
         collect_fee: true,
       });
 
+      // Set gas budget for transaction
+      txb.setGasBudget(GAS_BUDGET_MIST);
+
       // Execute transaction
       const result = await this.suiClient.signAndExecuteTransactionBlock({
         transactionBlock: txb,
@@ -435,6 +448,9 @@ class CetusRebalanceBot {
         tick_upper: newRange.tickUpper,
       });
 
+      // Set gas budget for transaction
+      openTxb.setGasBudget(GAS_BUDGET_MIST);
+
       const openResult = await this.suiClient.signAndExecuteTransactionBlock({
         transactionBlock: openTxb,
         signer: this.keypair,
@@ -477,6 +493,9 @@ class CetusRebalanceBot {
         collect_fee: false,
         rewarder_coin_types: [],
       });
+
+      // Set gas budget for transaction
+      addLiqTxb.setGasBudget(GAS_BUDGET_MIST);
 
       console.log('ZAP executed - SDK handling liquidity addition with token optimization');
 
