@@ -535,7 +535,6 @@ class CetusRebalanceBot {
       }
 
       console.log('\n--- Opening Position NFT ---');
-      console.log('\n--- Opening Position NFT ---');
       // Step 1: Open new position NFT with desired range
       const openTxb = this.sdk.Position.openPositionTransactionPayload({
         coinTypeA: poolInfo.coinTypeA,
@@ -639,7 +638,7 @@ class CetusRebalanceBot {
       if (!newPositionId) {
         console.error('❌ FAILED: No Position NFT detected after retries');
         console.error('Transaction digest:', openResult.digest);
-        console.error('ABORT: ZAP produced zero liquidity — no position minted');
+        console.error('ABORT: No Position NFT was created in transaction');
         return null;
       }
 
@@ -657,7 +656,7 @@ class CetusRebalanceBot {
           console.error('  - Token amounts are too small (rounding to zero)');
           console.error('  - Tick range is invalid relative to current price');
           console.error('  - Minimum liquidity threshold not met');
-          console.error('ABORT: ZAP produced zero liquidity — no position minted');
+          console.error('ABORT: Position created but has zero liquidity');
           return null;
         }
         
@@ -721,7 +720,7 @@ class CetusRebalanceBot {
         
         if (finalLiquidity === 0n) {
           console.error('❌ FAILED: Liquidity addition completed but position still has ZERO liquidity');
-          console.error('ABORT: ZAP produced zero liquidity — no position minted');
+          console.error('ABORT: Liquidity addition failed - position remains with zero liquidity');
           return null;
         }
         
@@ -762,9 +761,9 @@ class CetusRebalanceBot {
       console.log('\n=== ZAP EXECUTION COMPLETE ===');
       console.log('SUCCESS SUMMARY:');
       console.log(`  Transaction digest: ${addLiqResult.digest}`);
-      console.log(`  Position NFT found: true`);
+      console.log(`  Position NFT found: ${newPositionId ? 'true' : 'false'}`);
       console.log(`  Position ID: ${newPositionId}`);
-      console.log(`  Liquidity minted: true`);
+      console.log(`  Liquidity minted: ${finalPositionData && BigInt(finalPositionData.liquidity) > 0n ? 'true' : 'false'}`);
       console.log(`  Final liquidity: ${finalPositionData.liquidity}`);
       console.log(`  Pool: ${poolInfo.poolId}`);
       console.log(`  Tick range: [${tickLower}, ${tickUpper}]`);
