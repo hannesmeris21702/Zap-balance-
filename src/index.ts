@@ -10,6 +10,9 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 // A value of 10 means the position will span 10 tick spacings on each side of current price
 // This provides balanced concentration: not too narrow (frequent rebalancing) or too wide (reduced capital efficiency)
 
+// Regex pattern for extracting package ID from Move object type (format: package_id::module::Type)
+const PACKAGE_ID_PATTERN = /^(0x[a-fA-F0-9]+)::/;
+
 // SDK Configuration based on mainnet - from official Cetus SDK examples
 const SDKConfig = {
   clmmConfig: {
@@ -81,22 +84,22 @@ async function validateCetusConfig(suiClient: SuiClient): Promise<void> {
     }
     
     // Step 3: Extract package ID from config
-    const configData = configObject.data.content as any;
-    const configFields = configData.fields;
+    const configData = configObject.data.content;
+    const configFields = configData.fields as Record<string, unknown>;
     
     // The package ID should be in the config's package field or extracted from the type
     let configPackageId: string | undefined;
     
     // Try to extract package ID from the type (format: package_id::module::Type)
     if (configData.type) {
-      const typeMatch = configData.type.match(/^(0x[a-fA-F0-9]+)::/);
+      const typeMatch = configData.type.match(PACKAGE_ID_PATTERN);
       if (typeMatch) {
         configPackageId = typeMatch[1];
       }
     }
     
     // Also check if there's a package field in the config
-    if (configFields?.package) {
+    if (typeof configFields?.package === 'string') {
       configPackageId = configFields.package;
     }
     
@@ -139,8 +142,9 @@ async function validateCetusConfig(suiClient: SuiClient): Promise<void> {
       } else {
         console.log('⚠️  Warning: Could not fetch package version');
       }
-    } catch (versionError: any) {
-      console.log(`⚠️  Warning: Could not fetch package version: ${versionError.message}`);
+    } catch (versionError) {
+      const errorMessage = versionError instanceof Error ? versionError.message : String(versionError);
+      console.log(`⚠️  Warning: Could not fetch package version: ${errorMessage}`);
     }
     
     console.log('\n=== Configuration Summary ===');
@@ -148,9 +152,10 @@ async function validateCetusConfig(suiClient: SuiClient): Promise<void> {
     console.log(`Global Config ID: ${globalConfigId}`);
     console.log('✓ Validation completed successfully\n');
     
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('\n❌ ERROR: Failed to validate Cetus configuration');
-    console.error('Details:', error.message || error);
+    console.error('Details:', errorMessage);
     process.exit(1);
   }
 }
@@ -172,8 +177,9 @@ class CetusRebalanceBot {
     // Set senderAddress to match the wallet address used for signing
     this.sdk.senderAddress = this.walletAddress;
 
+    const clmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID || '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb';
     console.log(`Bot initialized for wallet: ${this.walletAddress}`);
-    console.log(`Cetus CLMM Package ID: 0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb`);
+    console.log(`Cetus CLMM Package ID: ${clmmPackageId}`);
     console.log(`Using Cetus SDK with mainnet configuration (version mismatch fixed)`);
     if (this.isTestMode) {
       console.log('⚠️  MAINNET TEST MODE ENABLED - Will process ONE position and exit');
