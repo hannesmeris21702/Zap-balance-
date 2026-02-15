@@ -65,8 +65,8 @@ cp .env.example .env
 ```
 SUI_RPC_URL=https://fullnode.mainnet.sui.io:443
 WALLET_PRIVATE_KEY=your_private_key_here
-CETUS_PACKAGE_ID=0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb
-CETUS_GLOBAL_CONFIG=0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f
+CETUS_CLMM_PACKAGE_ID=0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb
+CETUS_GLOBAL_CONFIG_ID=0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f
 REBALANCE_INTERVAL_MS=60000
 ```
 
@@ -78,8 +78,8 @@ REBALANCE_INTERVAL_MS=60000
 |----------|-------------|---------|
 | `SUI_RPC_URL` | Sui RPC endpoint URL | `https://fullnode.mainnet.sui.io:443` |
 | `WALLET_PRIVATE_KEY` | Your wallet's private key (hex format) | Required |
-| `CETUS_PACKAGE_ID` | Cetus protocol package ID | See `.env.example` |
-| `CETUS_GLOBAL_CONFIG` | Cetus global config object ID | See `.env.example` |
+| `CETUS_CLMM_PACKAGE_ID` | Cetus CLMM protocol package ID | See `.env.example` |
+| `CETUS_GLOBAL_CONFIG_ID` | Cetus global config object ID | See `.env.example` |
 | `REBALANCE_INTERVAL_MS` | Time between rebalance checks (milliseconds) | `60000` (1 minute) |
 | `MAINNET_TEST_MODE` | Enable safe single-shot test mode | `false` |
 
