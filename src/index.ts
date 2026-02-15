@@ -49,6 +49,7 @@ class CetusRebalanceBot {
   private sdk: CetusClmmSDK;
   private keypair: Ed25519Keypair;
   private walletAddress: string;
+  private isTestMode: boolean;
 
   constructor() {
     // Initialize Sui client
@@ -62,6 +63,9 @@ class CetusRebalanceBot {
     }
     this.keypair = Ed25519Keypair.fromSecretKey(Buffer.from(privateKey, 'hex'));
     this.walletAddress = this.keypair.getPublicKey().toSuiAddress();
+
+    // Check if MAINNET_TEST_MODE is enabled
+    this.isTestMode = process.env.MAINNET_TEST_MODE === 'true';
 
     // Initialize Cetus SDK with proper configuration
     const sdkOptions: SdkOptions = {
@@ -97,6 +101,9 @@ class CetusRebalanceBot {
     this.sdk = new CetusClmmSDK(sdkOptions);
 
     console.log(`Bot initialized for wallet: ${this.walletAddress}`);
+    if (this.isTestMode) {
+      console.log('⚠️  MAINNET TEST MODE ENABLED - Will process ONE position and exit');
+    }
   }
 
   /**
@@ -255,7 +262,7 @@ class CetusRebalanceBot {
   async zapAndAddLiquidity(
     poolInfo: {poolId: string; coinTypeA: string; coinTypeB: string},
     newRange: { tickLower: string; tickUpper: string }
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     try {
       console.log('Executing ZAP (using SDK to add liquidity with available tokens)...');
 
@@ -270,7 +277,7 @@ class CetusRebalanceBot {
       
       if (!coinABalance && !coinBBalance) {
         console.error('No coin balances available after closing position');
-        return false;
+        return null;
       }
 
       const amountA = coinABalance?.totalBalance || '0';
@@ -308,7 +315,7 @@ class CetusRebalanceBot {
       
       if (!positionObject) {
         console.error('Failed to find created position NFT');
-        return false;
+        return null;
       }
 
       const newPositionId = (positionObject as any).objectId;
@@ -342,11 +349,11 @@ class CetusRebalanceBot {
       });
 
       console.log(`Liquidity added successfully. Transaction: ${addLiqResult.digest}`);
-      return true;
+      return newPositionId;
     } catch (error) {
       console.error('ZAP failed:', error);
       console.log('Aborting - will not add liquidity without successful zap');
-      return false;
+      return null;
     }
   }
 
@@ -364,24 +371,45 @@ class CetusRebalanceBot {
       return;
     }
 
+    // In test mode, process only the FIRST position
+    const positionsToProcess = this.isTestMode ? [positions[0]] : positions;
+    
+    if (this.isTestMode) {
+      console.log(`MAINNET TEST MODE: Processing ONLY the first position out of ${positions.length} found`);
+    }
+
     // Step 2: Check each position
-    for (const position of positions) {
+    for (const position of positionsToProcess) {
       console.log(`\nProcessing position: ${position.positionId}`);
 
       const status = await this.checkPositionStatus(position);
 
       if (status.isInRange) {
+        if (this.isTestMode) {
+          console.log('✓ MAINNET TEST: position IN_RANGE');
+          console.log('No rebalance needed. Exiting safely.');
+          process.exit(0);
+        }
         console.log('position IN_RANGE - continuing monitoring');
         continue;
       }
 
       // Position is out of range
-      console.log('position OUT_OF_RANGE - initiating rebalance');
+      if (this.isTestMode) {
+        console.log('⚠️  MAINNET TEST: position OUT_OF_RANGE');
+        console.log('Initiating rebalance...');
+      } else {
+        console.log('position OUT_OF_RANGE - initiating rebalance');
+      }
 
       // Step 2b: Close position and get pool info
       const poolInfo = await this.closePosition(position);
       if (!poolInfo) {
-        console.log('Failed to close position - skipping rebalance');
+        console.error('Failed to close position - aborting');
+        if (this.isTestMode) {
+          console.error('❌ MAINNET TEST FAILED: Could not close position');
+          process.exit(1);
+        }
         continue;
       }
 
@@ -389,12 +417,27 @@ class CetusRebalanceBot {
       const newRange = await this.determineNewRange(poolInfo.poolId);
 
       // Step 4 & 5: ZAP and add liquidity using SDK (no manual calculations)
-      const success = await this.zapAndAddLiquidity(poolInfo, newRange);
+      const newPositionId = await this.zapAndAddLiquidity(poolInfo, newRange);
 
-      if (success) {
+      if (newPositionId) {
+        if (this.isTestMode) {
+          console.log('✅ MAINNET TEST SUCCESS');
+          console.log(`New position ID: ${newPositionId}`);
+          console.log('Rebalance completed successfully. Exiting.');
+          process.exit(0);
+        }
         console.log('Rebalance completed successfully');
       } else {
-        console.log('Rebalance aborted due to zap failure');
+        console.error('Rebalance aborted due to zap failure');
+        if (this.isTestMode) {
+          console.error('❌ MAINNET TEST FAILED: ZAP failed');
+          process.exit(1);
+        }
+      }
+
+      // In test mode, we only process one position, so break after first iteration
+      if (this.isTestMode) {
+        break;
       }
     }
 
@@ -402,32 +445,47 @@ class CetusRebalanceBot {
   }
 
   /**
-   * Start bot with monitoring loop
+   * Start bot with monitoring loop or single-shot test mode
    */
   async start(): Promise<void> {
-    console.log('Starting Cetus CLMM Rebalance Bot...');
-    console.log('Press Ctrl+C to stop\n');
-
-    const intervalMs = parseInt(process.env.REBALANCE_INTERVAL_MS || '60000', 10);
-    
-    // Validate interval
-    if (isNaN(intervalMs) || intervalMs < 1000) {
-      throw new Error('REBALANCE_INTERVAL_MS must be a valid number >= 1000 (at least 1 second)');
-    }
-
-    console.log(`Rebalance interval set to ${intervalMs}ms (${intervalMs / 1000}s)`);
-
-    // Run initial rebalance
-    await this.rebalance();
-
-    // Set up periodic rebalancing
-    setInterval(async () => {
+    if (this.isTestMode) {
+      console.log('🧪 Starting MAINNET SAFE TEST MODE...');
+      console.log('Will process ONE position and exit immediately\n');
+      
       try {
         await this.rebalance();
+        // If we reach here in test mode without exiting, it means no positions were found
+        console.log('No positions to process. Exiting.');
+        process.exit(0);
       } catch (error) {
-        console.error('Error during rebalance:', error);
+        console.error('❌ MAINNET TEST FAILED with unexpected error:', error);
+        process.exit(1);
       }
-    }, intervalMs);
+    } else {
+      console.log('Starting Cetus CLMM Rebalance Bot...');
+      console.log('Press Ctrl+C to stop\n');
+
+      const intervalMs = parseInt(process.env.REBALANCE_INTERVAL_MS || '60000', 10);
+      
+      // Validate interval
+      if (isNaN(intervalMs) || intervalMs < 1000) {
+        throw new Error('REBALANCE_INTERVAL_MS must be a valid number >= 1000 (at least 1 second)');
+      }
+
+      console.log(`Rebalance interval set to ${intervalMs}ms (${intervalMs / 1000}s)`);
+
+      // Run initial rebalance
+      await this.rebalance();
+
+      // Set up periodic rebalancing
+      setInterval(async () => {
+        try {
+          await this.rebalance();
+        } catch (error) {
+          console.error('Error during rebalance:', error);
+        }
+      }, intervalMs);
+    }
   }
 }
 
