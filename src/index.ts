@@ -462,7 +462,21 @@ class CetusRebalanceBot {
 
       console.log(`Position NFT created. Transaction: ${openResult.digest}`);
 
-      // Extract position ID from transaction result
+      // Wait for transaction to be confirmed
+      console.log('Waiting for transaction confirmation...');
+      await this.suiClient.waitForTransactionBlock({
+        digest: openResult.digest,
+        options: {
+          showEffects: true,
+          showObjectChanges: true,
+        },
+      });
+      console.log('Transaction confirmed.');
+
+      // Extract position ID from transaction result with retry logic
+      let newPositionId: string | null = null;
+      
+      // First attempt: Extract from transaction objectChanges
       const createdObjects = openResult.objectChanges?.filter(
         (change: any) => change.type === 'created'
       );
@@ -470,13 +484,54 @@ class CetusRebalanceBot {
         obj.objectType?.includes('position::Position')
       );
       
-      if (!positionObject) {
-        console.error('Failed to find created position NFT');
+      if (positionObject) {
+        newPositionId = (positionObject as any).objectId;
+        console.log(`New position ID extracted from transaction: ${newPositionId}`);
+      } else {
+        // Second attempt: Retry with exponential backoff to fetch created objects
+        console.log('Position NFT not immediately found in objectChanges, retrying...');
+        
+        const maxRetries = 5;
+        const baseDelayMs = 1000; // 1 second
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          const delayMs = baseDelayMs * Math.pow(2, attempt - 1); // Exponential backoff
+          console.log(`Retry attempt ${attempt}/${maxRetries} after ${delayMs}ms...`);
+          
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          
+          // Fetch transaction again to get updated objectChanges
+          const txResult = await this.suiClient.getTransactionBlock({
+            digest: openResult.digest,
+            options: {
+              showEffects: true,
+              showObjectChanges: true,
+            },
+          });
+          
+          const createdObjs = txResult.objectChanges?.filter(
+            (change: any) => change.type === 'created'
+          );
+          const posObj = createdObjs?.find((obj: any) => 
+            obj.objectType?.includes('position::Position')
+          );
+          
+          if (posObj) {
+            newPositionId = (posObj as any).objectId;
+            console.log(`New position ID found on attempt ${attempt}: ${newPositionId}`);
+            break;
+          }
+        }
+      }
+      
+      if (!newPositionId) {
+        console.error('Failed to find created position NFT after retries');
+        console.error('Transaction digest:', openResult.digest);
+        console.error('Please check the transaction on Sui explorer to verify if position was created');
         return null;
       }
 
-      const newPositionId = (positionObject as any).objectId;
-      console.log(`New position ID: ${newPositionId}`);
+      console.log(`New position ID confirmed: ${newPositionId}`);
 
       // Step 2: Add liquidity to the position using available tokens
       // SDK will handle token ratio optimization
