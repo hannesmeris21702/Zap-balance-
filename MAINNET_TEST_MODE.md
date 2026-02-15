@@ -258,9 +258,10 @@ fi
 - Check transaction logs for details
 
 ### "Failed to find created position NFT"
-- Transaction succeeded but NFT extraction failed
-- Check Sui explorer for the transaction
-- Position may still be created successfully
+- **This issue has been fixed** - The bot now waits for transaction confirmation and retries up to 5 times with exponential backoff
+- If you still encounter this error after retries, the bot will provide the transaction digest
+- Check Sui explorer using the provided transaction digest to verify if position was created
+- The retry logic handles cases where position NFT might not be immediately visible
 
 ## Support
 
