@@ -573,6 +573,7 @@ class CetusRebalanceBot {
       // Note: Cetus SDK does NOT guarantee Position NFT appears in tx.objectChanges
       // Position NFT may only be discoverable via wallet object query
       let newPositionId: string | null = null;
+      let lastError: any = null;
       
       console.log('\n--- Detecting Position NFT from Wallet-Owned Objects ---');
       
@@ -581,7 +582,7 @@ class CetusRebalanceBot {
       
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         if (attempt > 1) {
-          const delayMs = baseDelayMs * Math.pow(2, attempt - 2); // Exponential backoff
+          const delayMs = baseDelayMs * Math.pow(2, attempt - 1); // Exponential backoff: 1s, 2s, 4s, 8s, 16s
           console.log(`Retry attempt ${attempt}/${maxRetries} after ${delayMs}ms...`);
           await new Promise(resolve => setTimeout(resolve, delayMs));
         } else {
@@ -602,14 +603,23 @@ class CetusRebalanceBot {
           );
           
           if (matchingPositions.length > 0) {
-            // If multiple matches, assume the last one is the newest
-            // (SDK typically returns positions in order, but this is a safe fallback)
+            // Sort by position ID (higher IDs are typically newer in Sui)
+            // This ensures we get the most recently created position
+            matchingPositions.sort((a: any, b: any) => {
+              // Compare position object IDs - newer objects typically have higher IDs
+              return a.pos_object_id.localeCompare(b.pos_object_id);
+            });
+            
             newPositionId = matchingPositions[matchingPositions.length - 1].pos_object_id;
             console.log(`✓ Position NFT found in wallet: ${newPositionId}`);
             console.log(`  Matching positions found: ${matchingPositions.length}`);
             break;
           }
+          
+          // Clear error on successful query
+          lastError = null;
         } catch (error) {
+          lastError = error;
           console.log(`⚠️  Error querying positions on attempt ${attempt}:`, error);
           // Continue to retry
         }
@@ -618,6 +628,9 @@ class CetusRebalanceBot {
       if (!newPositionId) {
         console.error('❌ FAILED: No Position NFT found in wallet after retries');
         console.error('Transaction digest:', openResult.digest);
+        if (lastError) {
+          console.error('Last error during position query:', lastError);
+        }
         console.error('ABORT: No Position NFT was created in transaction');
         return null;
       }
