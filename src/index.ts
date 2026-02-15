@@ -188,21 +188,21 @@ class CetusRebalanceBot {
   private keypair: Ed25519Keypair;
   private walletAddress: string;
   private isTestMode: boolean;
+  private clmmPackageId: string;
 
-  private constructor(suiClient: SuiClient, sdk: CetusClmmSDK, keypair: Ed25519Keypair, walletAddress: string, isTestMode: boolean) {
+  private constructor(suiClient: SuiClient, sdk: CetusClmmSDK, keypair: Ed25519Keypair, walletAddress: string, isTestMode: boolean, clmmPackageId: string) {
     this.suiClient = suiClient;
     this.sdk = sdk;
     this.keypair = keypair;
     this.walletAddress = walletAddress;
     this.isTestMode = isTestMode;
+    this.clmmPackageId = clmmPackageId;
     
     // Set senderAddress to match the wallet address used for signing
     this.sdk.senderAddress = this.walletAddress;
 
-    // Note: CETUS_CLMM_PACKAGE_ID is validated before this constructor is called
-    const clmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID;
     console.log(`Bot initialized for wallet: ${this.walletAddress}`);
-    console.log(`Cetus CLMM Package ID: ${clmmPackageId}`);
+    console.log(`Cetus CLMM Package ID: ${this.clmmPackageId}`);
     console.log(`Using Cetus SDK with validated mainnet configuration`);
     if (this.isTestMode) {
       console.log('⚠️  MAINNET TEST MODE ENABLED - Will process ONE position and exit');
@@ -266,7 +266,10 @@ class CetusRebalanceBot {
     };
     const sdk = new CetusClmmSDK(sdkOptions);
 
-    return new CetusRebalanceBot(suiClient, sdk, keypair, walletAddress, isTestMode);
+    // Get the validated package ID
+    const clmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID!;
+
+    return new CetusRebalanceBot(suiClient, sdk, keypair, walletAddress, isTestMode, clmmPackageId);
   }
 
   /**
@@ -593,14 +596,27 @@ class CetusRebalanceBot {
         
         // Look for a 'created' object that matches the Cetus Position NFT type
         // Cetus Position NFTs have type: {PACKAGE_ID}::position::Position
+        // SECURITY: Verify the object type starts with the validated Cetus package ID
+        const expectedPositionType = `${this.clmmPackageId}::position::Position`;
+        
         for (const change of confirmedTx.objectChanges) {
           if (change.type === 'created') {
-            const objectType = change.objectType || '';
-            // Check if this is a Position NFT (format: 0x...::position::Position)
-            if (objectType.includes('::position::Position')) {
+            const objectType = change.objectType;
+            
+            // SECURITY: Check if objectType is defined
+            if (!objectType) {
+              console.log('⚠️  Warning: Found created object without objectType field');
+              console.log('   This may indicate an unexpected transaction structure');
+              continue;
+            }
+            
+            // SECURITY: Match exact type to prevent matching malicious contracts
+            // Only accept Position NFTs from the validated Cetus package
+            if (objectType === expectedPositionType) {
               newPositionId = change.objectId;
               console.log(`✓ Position NFT found in transaction effects: ${newPositionId}`);
               console.log(`  Object type: ${objectType}`);
+              console.log(`  Verified against package: ${this.clmmPackageId}`);
               break;
             }
           }
