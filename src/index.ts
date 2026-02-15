@@ -608,10 +608,12 @@ class CetusRebalanceBot {
         
         if (matchingPositions.length > 0) {
           // Sort by position object ID to select the newest position
-          // NOTE: This assumes Sui object IDs increase monotonically with creation time,
-          // which is the current behavior in Sui. The Position type does not include
-          // a creation timestamp, so object ID sorting is the recommended approach.
-          // We use localeCompare which provides lexicographic ordering suitable for hex IDs.
+          // NOTE: Sui object IDs are 32-byte values represented as fixed-length hex strings
+          // (66 characters: "0x" + 64 hex digits). For fixed-length hex strings, lexicographic
+          // comparison (localeCompare) correctly orders them by their numeric value.
+          // This assumes Sui object IDs increase monotonically with creation time, which is
+          // the current behavior in Sui. The Position type does not include a creation timestamp,
+          // so object ID sorting is the recommended approach for identifying the newest position.
           matchingPositions.sort((a: any, b: any) => {
             return a.pos_object_id.localeCompare(b.pos_object_id);
           });
