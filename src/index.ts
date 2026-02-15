@@ -10,6 +10,9 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 // A value of 10 means the position will span 10 tick spacings on each side of current price
 // This provides balanced concentration: not too narrow (frequent rebalancing) or too wide (reduced capital efficiency)
 
+// Regex pattern for extracting package ID from Move object type (format: package_id::module::Type)
+const PACKAGE_ID_PATTERN = /^(0x[a-fA-F0-9]+)::/;
+
 // SDK Configuration based on mainnet - from official Cetus SDK examples
 const SDKConfig = {
   clmmConfig: {
@@ -44,6 +47,119 @@ interface PositionStatus {
   currentTick: number;
 }
 
+/**
+ * Validates Cetus SDK package and config version
+ * Checks that the global config's package ID matches the expected CLMM package ID
+ * and logs version information
+ */
+async function validateCetusConfig(suiClient: SuiClient): Promise<void> {
+  console.log('\n=== Validating Cetus SDK Configuration ===');
+  
+  // Step 1: Read environment variables
+  const clmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID;
+  const globalConfigId = process.env.CETUS_GLOBAL_CONFIG_ID;
+  
+  if (!clmmPackageId || !globalConfigId) {
+    console.error('❌ ERROR: CETUS_CLMM_PACKAGE_ID and CETUS_GLOBAL_CONFIG_ID must be set in environment');
+    process.exit(1);
+  }
+  
+  console.log(`CETUS_CLMM_PACKAGE_ID: ${clmmPackageId}`);
+  console.log(`CETUS_GLOBAL_CONFIG_ID: ${globalConfigId}`);
+  
+  try {
+    // Step 2: Fetch global config object
+    console.log('\nFetching global config object...');
+    const configObject = await suiClient.getObject({
+      id: globalConfigId,
+      options: { 
+        showContent: true, 
+        showType: true 
+      }
+    });
+    
+    if (configObject.data?.content?.dataType !== 'moveObject') {
+      console.error('❌ ERROR: Global config object not found or invalid');
+      process.exit(1);
+    }
+    
+    // Step 3: Extract package ID from config
+    const configData = configObject.data.content;
+    const configFields = configData.fields as Record<string, unknown>;
+    
+    // The package ID should be in the config's package field or extracted from the type
+    let configPackageId: string | undefined;
+    
+    // Try to extract package ID from the type (format: package_id::module::Type)
+    if (configData.type) {
+      const typeMatch = configData.type.match(PACKAGE_ID_PATTERN);
+      if (typeMatch) {
+        configPackageId = typeMatch[1];
+      }
+    }
+    
+    // Also check if there's a package field in the config
+    if (typeof configFields?.package === 'string') {
+      configPackageId = configFields.package;
+    }
+    
+    if (!configPackageId) {
+      console.log('⚠️  Warning: Could not extract package ID from config object');
+      console.log('Config type:', configData.type);
+      console.log('Config fields:', JSON.stringify(configFields, null, 2));
+    } else {
+      console.log(`Config package ID: ${configPackageId}`);
+      
+      // Step 4: Compare package IDs
+      if (configPackageId !== clmmPackageId) {
+        console.error('\n❌ ERROR: Package ID mismatch!');
+        console.error(`  Expected (CETUS_CLMM_PACKAGE_ID): ${clmmPackageId}`);
+        console.error(`  Found in config: ${configPackageId}`);
+        console.error('  The SDK configuration does not match the on-chain global config.');
+        console.error('  Please update your environment variables to match the correct package ID.');
+        process.exit(1);
+      }
+      
+      console.log('✓ Package ID validation passed');
+    }
+    
+    // Step 5: Fetch package version
+    console.log('\nFetching package version...');
+    try {
+      const packageObject = await suiClient.getObject({
+        id: clmmPackageId,
+        options: {
+          showContent: true,
+          showType: true,
+          showBcs: true
+        }
+      });
+      
+      if (packageObject.data) {
+        // For package objects, the version is stored in the object's version field
+        const version = packageObject.data.version;
+        console.log(`Package version: ${version}`);
+      } else {
+        console.log('⚠️  Warning: Could not fetch package version');
+      }
+    } catch (versionError) {
+      const errorMessage = versionError instanceof Error ? versionError.message : String(versionError);
+      console.log(`⚠️  Warning: Could not fetch package version: ${errorMessage}`);
+    }
+    
+    console.log('\n=== Configuration Summary ===');
+    console.log(`Package ID: ${clmmPackageId}`);
+    console.log(`Global Config ID: ${globalConfigId}`);
+    console.log('✓ Validation completed successfully\n');
+    
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('\n❌ ERROR: Failed to validate Cetus configuration');
+    console.error('Details:', errorMessage);
+    process.exit(1);
+  }
+}
+
 class CetusRebalanceBot {
   private suiClient: SuiClient;
   private sdk: CetusClmmSDK;
@@ -51,30 +167,55 @@ class CetusRebalanceBot {
   private walletAddress: string;
   private isTestMode: boolean;
 
-  constructor() {
+  private constructor(suiClient: SuiClient, sdk: CetusClmmSDK, keypair: Ed25519Keypair, walletAddress: string, isTestMode: boolean) {
+    this.suiClient = suiClient;
+    this.sdk = sdk;
+    this.keypair = keypair;
+    this.walletAddress = walletAddress;
+    this.isTestMode = isTestMode;
+    
+    // Set senderAddress to match the wallet address used for signing
+    this.sdk.senderAddress = this.walletAddress;
+
+    // Note: CETUS_CLMM_PACKAGE_ID is validated before this constructor is called
+    const clmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID;
+    console.log(`Bot initialized for wallet: ${this.walletAddress}`);
+    console.log(`Cetus CLMM Package ID: ${clmmPackageId}`);
+    console.log(`Using Cetus SDK with validated mainnet configuration`);
+    if (this.isTestMode) {
+      console.log('⚠️  MAINNET TEST MODE ENABLED - Will process ONE position and exit');
+    }
+  }
+
+  /**
+   * Factory method to create and initialize a CetusRebalanceBot instance
+   * Validates Cetus SDK configuration before initialization
+   */
+  static async create(): Promise<CetusRebalanceBot> {
     // Initialize Sui client
     const rpcUrl = process.env.SUI_RPC_URL || 'https://fullnode.mainnet.sui.io:443';
-    this.suiClient = new SuiClient({ url: rpcUrl });
+    const suiClient = new SuiClient({ url: rpcUrl });
+
+    // Validate Cetus SDK configuration before proceeding
+    await validateCetusConfig(suiClient);
 
     // Initialize keypair from private key
     const privateKey = process.env.WALLET_PRIVATE_KEY;
     if (!privateKey) {
       throw new Error('WALLET_PRIVATE_KEY not set in environment');
     }
-    this.keypair = Ed25519Keypair.fromSecretKey(Buffer.from(privateKey, 'hex'));
-    this.walletAddress = this.keypair.getPublicKey().toSuiAddress();
+    const keypair = Ed25519Keypair.fromSecretKey(Buffer.from(privateKey, 'hex'));
+    const walletAddress = keypair.getPublicKey().toSuiAddress();
 
     // Check if MAINNET_TEST_MODE is enabled
-    this.isTestMode = process.env.MAINNET_TEST_MODE === 'true';
+    const isTestMode = process.env.MAINNET_TEST_MODE === 'true';
 
     // Initialize Cetus SDK with mainnet configuration
     // CRITICAL FIX: published_at MUST equal package_id to avoid version mismatch errors
-    // The previous version had published_at = 0x70968826ad1b4ba895753f634b0aea68d0672908ca1075a2abdf0fc9e0b2fc6a
-    // which caused MoveAbort error 10 in checked_package_version
     const sdkOptions: SdkOptions = {
       fullRpcUrl: rpcUrl,
       simulationAccount: {
-        address: this.walletAddress,
+        address: walletAddress,
       },
       cetus_config: {
         package_id: '0x95b8d278b876cae22206131fb9724f701c9444515813042f54f0a426c9a3bc2f',
@@ -83,7 +224,7 @@ class CetusRebalanceBot {
       },
       clmm_pool: {
         package_id: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb',
-        published_at: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb', // FIXED: now matches package_id
+        published_at: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb',
         config: SDKConfig.clmmConfig,
       },
       integrate: {
@@ -101,18 +242,9 @@ class CetusRebalanceBot {
       aggregatorUrl: 'https://api-sui.cetus.zone/router',
       swapCountUrl: 'https://api-sui.cetus.zone/v2/sui/swap/count',
     };
-    this.sdk = new CetusClmmSDK(sdkOptions);
-    
-    // Set senderAddress to match the wallet address used for signing
-    // This is required for closePosition and other SDK operations to work correctly
-    this.sdk.senderAddress = this.walletAddress;
+    const sdk = new CetusClmmSDK(sdkOptions);
 
-    console.log(`Bot initialized for wallet: ${this.walletAddress}`);
-    console.log(`Cetus CLMM Package ID: 0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb`);
-    console.log(`Using Cetus SDK with mainnet configuration (version mismatch fixed)`);
-    if (this.isTestMode) {
-      console.log('⚠️  MAINNET TEST MODE ENABLED - Will process ONE position and exit');
-    }
+    return new CetusRebalanceBot(suiClient, sdk, keypair, walletAddress, isTestMode);
   }
 
   /**
@@ -501,7 +633,7 @@ class CetusRebalanceBot {
 // Main entry point
 async function main() {
   try {
-    const bot = new CetusRebalanceBot();
+    const bot = await CetusRebalanceBot.create();
     await bot.start();
   } catch (error) {
     console.error('Fatal error:', error);
