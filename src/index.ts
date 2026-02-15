@@ -17,7 +17,7 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 const RPC_INDEXING_DELAY_MS = (() => {
   const value = parseInt(process.env.RPC_INDEXING_DELAY_MS || '5000', 10);
   if (isNaN(value) || value < 1000) {
-    throw new Error(`Invalid RPC_INDEXING_DELAY_MS: must be at least 1000ms (got: ${process.env.RPC_INDEXING_DELAY_MS})`);
+    throw new Error(`Invalid RPC_INDEXING_DELAY_MS: must be at least 1000ms (got: ${value})`);
   }
   return value;
 })();
