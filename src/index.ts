@@ -177,10 +177,11 @@ class CetusRebalanceBot {
     // Set senderAddress to match the wallet address used for signing
     this.sdk.senderAddress = this.walletAddress;
 
-    const clmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID || '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb';
+    // Note: CETUS_CLMM_PACKAGE_ID is validated before this constructor is called
+    const clmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID;
     console.log(`Bot initialized for wallet: ${this.walletAddress}`);
     console.log(`Cetus CLMM Package ID: ${clmmPackageId}`);
-    console.log(`Using Cetus SDK with mainnet configuration (version mismatch fixed)`);
+    console.log(`Using Cetus SDK with validated mainnet configuration`);
     if (this.isTestMode) {
       console.log('⚠️  MAINNET TEST MODE ENABLED - Will process ONE position and exit');
     }
