@@ -606,17 +606,25 @@ class CetusRebalanceBot {
         );
         
         if (matchingPositions.length > 0) {
-          // Sort by position object ID in ascending order to select the newest position
-          // NOTE: This assumes Sui object IDs are monotonically increasing for newer objects,
-          // which has been the case in Sui's current implementation. After sorting in ascending order,
-          // the newest position (highest ID) is at the end of the array.
-          // If multiple positions match, this selects the most recently created one.
+          // Sort by position object ID to select the newest position
+          // NOTE: This assumes Sui object IDs increase monotonically with creation time,
+          // which is the current behavior in Sui. The Position type does not include
+          // a creation timestamp, so object ID sorting is the recommended approach.
+          // We use localeCompare which provides lexicographic ordering suitable for hex IDs.
           matchingPositions.sort((a: any, b: any) => {
             return a.pos_object_id.localeCompare(b.pos_object_id);
           });
           
-          // Set POSITION_ID from the new position (last element = newest)
-          newPositionId = matchingPositions[matchingPositions.length - 1].pos_object_id;
+          // Select the last element (highest ID = newest position)
+          const newestPosition = matchingPositions.at(-1);
+          newPositionId = newestPosition?.pos_object_id ?? null;
+          
+          if (!newPositionId) {
+            console.error('❌ FAILED: Unable to extract position ID from matching positions');
+            console.error('Transaction digest:', openResult.digest);
+            console.error('ABORT: Position detection error');
+            return null;
+          }
           console.log(`✓ Position NFT found: ${newPositionId}`);
           console.log(`  Pool: ${poolInfo.poolId}`);
           console.log(`  Tick range: [${tickLower}, ${tickUpper}]`);
