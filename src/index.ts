@@ -188,21 +188,21 @@ class CetusRebalanceBot {
   private keypair: Ed25519Keypair;
   private walletAddress: string;
   private isTestMode: boolean;
+  private clmmPackageId: string;
 
-  private constructor(suiClient: SuiClient, sdk: CetusClmmSDK, keypair: Ed25519Keypair, walletAddress: string, isTestMode: boolean) {
+  private constructor(suiClient: SuiClient, sdk: CetusClmmSDK, keypair: Ed25519Keypair, walletAddress: string, isTestMode: boolean, clmmPackageId: string) {
     this.suiClient = suiClient;
     this.sdk = sdk;
     this.keypair = keypair;
     this.walletAddress = walletAddress;
     this.isTestMode = isTestMode;
+    this.clmmPackageId = clmmPackageId;
     
     // Set senderAddress to match the wallet address used for signing
     this.sdk.senderAddress = this.walletAddress;
 
-    // Note: CETUS_CLMM_PACKAGE_ID is validated before this constructor is called
-    const clmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID;
     console.log(`Bot initialized for wallet: ${this.walletAddress}`);
-    console.log(`Cetus CLMM Package ID: ${clmmPackageId}`);
+    console.log(`Cetus CLMM Package ID: ${this.clmmPackageId}`);
     console.log(`Using Cetus SDK with validated mainnet configuration`);
     if (this.isTestMode) {
       console.log('⚠️  MAINNET TEST MODE ENABLED - Will process ONE position and exit');
@@ -266,7 +266,10 @@ class CetusRebalanceBot {
     };
     const sdk = new CetusClmmSDK(sdkOptions);
 
-    return new CetusRebalanceBot(suiClient, sdk, keypair, walletAddress, isTestMode);
+    // Get the validated package ID
+    const clmmPackageId = process.env.CETUS_CLMM_PACKAGE_ID!;
+
+    return new CetusRebalanceBot(suiClient, sdk, keypair, walletAddress, isTestMode, clmmPackageId);
   }
 
   /**
@@ -572,7 +575,7 @@ class CetusRebalanceBot {
 
       // TASK 2: Wait for transaction confirmation and parse effects
       console.log('\n--- Waiting for Transaction Confirmation ---');
-      await this.suiClient.waitForTransactionBlock({
+      const confirmedTx = await this.suiClient.waitForTransactionBlock({
         digest: openResult.digest,
         options: {
           showEffects: true,
@@ -581,68 +584,108 @@ class CetusRebalanceBot {
       });
       console.log('✓ Transaction confirmed');
 
-      // TASK 2: Query wallet-owned objects to find Position NFT using official Cetus SDK pattern
-      // Official pattern from Cetus SDK: After tx confirms, wait 5s for RPC indexing, then query with pool filter
+      // TASK 2: Parse transaction effects to extract Position NFT ID directly
+      // This is the most reliable method - we get the object ID from the transaction that created it
       let newPositionId: string | null = null;
       
-      console.log('\n--- Detecting Position NFT (Official Cetus SDK Pattern) ---');
-      console.log(`Waiting ${RPC_INDEXING_DELAY_MS}ms for RPC indexing...`);
-      await new Promise(resolve => setTimeout(resolve, RPC_INDEXING_DELAY_MS));
+      console.log('\n--- Detecting Position NFT (Direct Transaction Parsing) ---');
       
-      try {
-        // Query wallet-owned Position NFTs filtered by pool ID (official Cetus SDK method)
-        console.log(`Querying positions for pool: ${poolInfo.poolId}`);
-        const ownedPositions = await this.sdk.Position.getPositionList(
-          this.walletAddress,
-          [poolInfo.poolId]  // Filter by pool ID as per official SDK pattern
-        );
+      // Parse objectChanges to find the created Position NFT
+      if (confirmedTx.objectChanges && confirmedTx.objectChanges.length > 0) {
+        console.log(`Found ${confirmedTx.objectChanges.length} object changes in transaction`);
         
-        // Filter positions by exact tick_lower and tick_upper from config
-        // Also verify pool ID to ensure correct position if wallet has multiple positions with identical ticks
-        const matchingPositions = ownedPositions.filter(
-          (pos: any) => 
-            pos.pool === poolInfo.poolId &&
-            pos.tick_lower_index === tickLower &&
-            pos.tick_upper_index === tickUpper
-        );
+        // Look for a 'created' object that matches the Cetus Position NFT type
+        // Cetus Position NFTs have type: {PACKAGE_ID}::position::Position
+        // SECURITY: Verify the object type starts with the validated Cetus package ID
+        const expectedPositionType = `${this.clmmPackageId}::position::Position`;
         
-        if (matchingPositions.length > 0) {
-          // Sort by position object ID to select the newest position
-          // NOTE: Sui object IDs are 32-byte values represented as fixed-length hex strings
-          // (66 characters: "0x" + 64 hex digits). For fixed-length hex strings, standard string
-          // comparison correctly orders them by their numeric value (equivalent to numeric comparison).
-          // This assumes Sui object IDs increase monotonically with creation time, which is
-          // the current behavior in Sui. The Position type does not include a creation timestamp,
-          // so object ID sorting is the recommended approach for identifying the newest position.
-          matchingPositions.sort((a, b) => {
-            // Standard string comparison for fixed-length hex strings
-            if (a.pos_object_id < b.pos_object_id) return -1;
-            if (a.pos_object_id > b.pos_object_id) return 1;
-            return 0;
-          });
+        for (const change of confirmedTx.objectChanges) {
+          if (change.type === 'created') {
+            const objectType = change.objectType;
+            
+            // SECURITY: Check if objectType is defined
+            if (!objectType) {
+              console.log('⚠️  Warning: Found created object without objectType field');
+              console.log('   This may indicate an unexpected transaction structure');
+              continue;
+            }
+            
+            // SECURITY: Match exact type to prevent matching malicious contracts
+            // Only accept Position NFTs from the validated Cetus package
+            if (objectType === expectedPositionType) {
+              newPositionId = change.objectId;
+              console.log(`✓ Position NFT found in transaction effects: ${newPositionId}`);
+              console.log(`  Object type: ${objectType}`);
+              console.log(`  Verified against package: ${this.clmmPackageId}`);
+              break;
+            }
+          }
+        }
+      }
+
+      // Fallback: If we couldn't parse the Position NFT ID from transaction effects,
+      // use the old method of querying positions (with RPC indexing delay)
+      if (!newPositionId) {
+        console.log('⚠️  Could not parse Position NFT from transaction effects');
+        console.log('   Falling back to position query method...');
+        console.log(`   Waiting ${RPC_INDEXING_DELAY_MS}ms for RPC indexing...`);
+        await new Promise(resolve => setTimeout(resolve, RPC_INDEXING_DELAY_MS));
+        
+        try {
+          // Query wallet-owned Position NFTs filtered by pool ID (official Cetus SDK method)
+          console.log(`Querying positions for pool: ${poolInfo.poolId}`);
+          const ownedPositions = await this.sdk.Position.getPositionList(
+            this.walletAddress,
+            [poolInfo.poolId]  // Filter by pool ID as per official SDK pattern
+          );
           
-          // Select the last element (highest ID = newest position)
-          // Since we verified matchingPositions.length > 0, the last index is guaranteed to exist
-          newPositionId = matchingPositions[matchingPositions.length - 1].pos_object_id;
-          console.log(`✓ Position NFT found: ${newPositionId}`);
-          console.log(`  Pool: ${poolInfo.poolId}`);
-          console.log(`  Tick range: [${tickLower}, ${tickUpper}]`);
-          console.log(`  Matching positions found: ${matchingPositions.length}`);
-        } else {
-          console.error('❌ FAILED: No Position NFT found matching tick range');
-          console.error(`  Pool: ${poolInfo.poolId}`);
-          console.error(`  Expected tick range: [${tickLower}, ${tickUpper}]`);
-          console.error(`  Positions found in pool: ${ownedPositions.length}`);
+          // Filter positions by exact tick_lower and tick_upper from config
+          // Also verify pool ID to ensure correct position if wallet has multiple positions with identical ticks
+          const matchingPositions = ownedPositions.filter(
+            (pos: any) => 
+              pos.pool === poolInfo.poolId &&
+              pos.tick_lower_index === tickLower &&
+              pos.tick_upper_index === tickUpper
+          );
+          
+          if (matchingPositions.length > 0) {
+            // Sort by position object ID to select the newest position
+            // NOTE: Sui object IDs are 32-byte values represented as fixed-length hex strings
+            // (66 characters: "0x" + 64 hex digits). For fixed-length hex strings, standard string
+            // comparison correctly orders them by their numeric value (equivalent to numeric comparison).
+            // This assumes Sui object IDs increase monotonically with creation time, which is
+            // the current behavior in Sui. The Position type does not include a creation timestamp,
+            // so object ID sorting is the recommended approach for identifying the newest position.
+            matchingPositions.sort((a, b) => {
+              // Standard string comparison for fixed-length hex strings
+              if (a.pos_object_id < b.pos_object_id) return -1;
+              if (a.pos_object_id > b.pos_object_id) return 1;
+              return 0;
+            });
+            
+            // Select the last element (highest ID = newest position)
+            // Since we verified matchingPositions.length > 0, the last index is guaranteed to exist
+            newPositionId = matchingPositions[matchingPositions.length - 1].pos_object_id;
+            console.log(`✓ Position NFT found via query: ${newPositionId}`);
+            console.log(`  Pool: ${poolInfo.poolId}`);
+            console.log(`  Tick range: [${tickLower}, ${tickUpper}]`);
+            console.log(`  Matching positions found: ${matchingPositions.length}`);
+          } else {
+            console.error('❌ FAILED: No Position NFT found matching tick range');
+            console.error(`  Pool: ${poolInfo.poolId}`);
+            console.error(`  Expected tick range: [${tickLower}, ${tickUpper}]`);
+            console.error(`  Positions found in pool: ${ownedPositions.length}`);
+            console.error('Transaction digest:', openResult.digest);
+            console.error('ABORT: No Position NFT was created with the expected parameters');
+            return null;
+          }
+        } catch (error) {
+          console.error('❌ ERROR: Failed to query positions using Cetus SDK');
+          console.error('Details:', error);
           console.error('Transaction digest:', openResult.digest);
-          console.error('ABORT: No Position NFT was created with the expected parameters');
+          console.error('ABORT: Cannot detect Position NFT');
           return null;
         }
-      } catch (error) {
-        console.error('❌ ERROR: Failed to query positions using Cetus SDK');
-        console.error('Details:', error);
-        console.error('Transaction digest:', openResult.digest);
-        console.error('ABORT: Cannot detect Position NFT');
-        return null;
       }
 
       // TASK 2 & TASK 3: Verify Position NFT actually has liquidity > 0
