@@ -10,6 +10,17 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 // A value of 10 means the position will span 10 tick spacings on each side of current price
 // This provides balanced concentration: not too narrow (frequent rebalancing) or too wide (reduced capital efficiency)
 
+// RPC indexing delay after creating a new position - configurable via environment variable
+// Default: 5000ms (5 seconds) - recommended by Cetus SDK to allow RPC nodes to index new positions
+// Adjust if experiencing position detection issues due to network latency
+const RPC_INDEXING_DELAY_MS = (() => {
+  const value = parseInt(process.env.RPC_INDEXING_DELAY_MS || '5000', 10);
+  if (isNaN(value) || value < 0) {
+    throw new Error(`Invalid RPC_INDEXING_DELAY_MS: must be a non-negative number (got: ${process.env.RPC_INDEXING_DELAY_MS})`);
+  }
+  return value;
+})();
+
 // Gas budget for transactions - configurable via environment variable
 // Default: 500000000 MIST (0.5 SUI)
 const GAS_BUDGET_MIST = (() => {
@@ -574,8 +585,8 @@ class CetusRebalanceBot {
       let newPositionId: string | null = null;
       
       console.log('\n--- Detecting Position NFT (Official Cetus SDK Pattern) ---');
-      console.log('Waiting 5 seconds for RPC indexing...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      console.log(`Waiting ${RPC_INDEXING_DELAY_MS}ms for RPC indexing...`);
+      await new Promise(resolve => setTimeout(resolve, RPC_INDEXING_DELAY_MS));
       
       try {
         // Query wallet-owned Position NFTs filtered by pool ID (official Cetus SDK method)
@@ -596,9 +607,10 @@ class CetusRebalanceBot {
         
         if (matchingPositions.length > 0) {
           // Sort by position object ID in ascending order to select the newest position
-          // In Sui, object IDs are deterministically generated and newer objects
-          // have lexicographically higher IDs. After sorting in ascending order,
+          // NOTE: This assumes Sui object IDs are monotonically increasing for newer objects,
+          // which has been the case in Sui's current implementation. After sorting in ascending order,
           // the newest position (highest ID) is at the end of the array.
+          // If multiple positions match, this selects the most recently created one.
           matchingPositions.sort((a: any, b: any) => {
             return a.pos_object_id.localeCompare(b.pos_object_id);
           });
