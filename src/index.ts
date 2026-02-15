@@ -10,7 +10,9 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 // A value of 10 means the position will span 10 tick spacings on each side of current price
 // This provides balanced concentration: not too narrow (frequent rebalancing) or too wide (reduced capital efficiency)
 
-const DEFAULT_GAS_BUDGET_MIST = 500000000; // 0.5 SUI - gas budget for transactions (in MIST, 1 SUI = 1e9 MIST)
+// Gas budget for transactions - configurable via environment variable
+// Default: 500000000 MIST (0.5 SUI)
+const DEFAULT_GAS_BUDGET_MIST = parseInt(process.env.GAS_BUDGET_MIST || '500000000', 10);
 
 // Regex pattern for extracting package ID from Move object type (format: package_id::module::Type)
 const PACKAGE_ID_PATTERN = /^(0x[a-fA-F0-9]+)::/;
