@@ -12,11 +12,12 @@ const RANGE_WIDTH_MULTIPLIER = 10; // Multiplier for tick spacing to determine p
 
 // RPC indexing delay after creating a new position - configurable via environment variable
 // Default: 5000ms (5 seconds) - recommended by Cetus SDK to allow RPC nodes to index new positions
+// Minimum: 1000ms (1 second) to ensure sufficient indexing time
 // Adjust if experiencing position detection issues due to network latency
 const RPC_INDEXING_DELAY_MS = (() => {
   const value = parseInt(process.env.RPC_INDEXING_DELAY_MS || '5000', 10);
-  if (isNaN(value) || value < 0) {
-    throw new Error(`Invalid RPC_INDEXING_DELAY_MS: must be a non-negative number (got: ${process.env.RPC_INDEXING_DELAY_MS})`);
+  if (isNaN(value) || value < 1000) {
+    throw new Error(`Invalid RPC_INDEXING_DELAY_MS: must be at least 1000ms (got: ${process.env.RPC_INDEXING_DELAY_MS})`);
   }
   return value;
 })();
@@ -616,15 +617,8 @@ class CetusRebalanceBot {
           });
           
           // Select the last element (highest ID = newest position)
-          const newestPosition = matchingPositions.at(-1);
-          newPositionId = newestPosition?.pos_object_id ?? null;
-          
-          if (!newPositionId) {
-            console.error('❌ FAILED: Unable to extract position ID from matching positions');
-            console.error('Transaction digest:', openResult.digest);
-            console.error('ABORT: Position detection error');
-            return null;
-          }
+          // Since we verified matchingPositions.length > 0, the last index is guaranteed to exist
+          newPositionId = matchingPositions[matchingPositions.length - 1].pos_object_id;
           console.log(`✓ Position NFT found: ${newPositionId}`);
           console.log(`  Pool: ${poolInfo.poolId}`);
           console.log(`  Tick range: [${tickLower}, ${tickUpper}]`);
