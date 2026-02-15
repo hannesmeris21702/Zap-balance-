@@ -13,6 +13,39 @@ After examining the Cetus CLMM SDK v4.0.0, we found that:
 - **The SDK does NOT have a dedicated `zap()` or `zapIn()` function**
 - However, the SDK provides all the necessary primitives to implement ZAP functionality
 
+## Position NFT Detection Fix (2026-02-15)
+
+### Issue
+The bot was failing to detect the Position NFT after creation during ZAP execution:
+- Position NFT transaction would succeed
+- Bot waited 5 seconds for RPC indexing
+- Bot queried positions by pool ID and tick range
+- **FAILED**: Could not find the newly created position despite multiple positions existing in the pool
+
+### Root Cause
+The original implementation relied on:
+1. Waiting for RPC indexing (5 second delay)
+2. Querying all positions for the pool
+3. Filtering by exact tick range match
+
+This approach was unreliable because:
+- RPC indexing delay could vary based on network conditions
+- Query results might not immediately include the just-created position
+- No direct parsing of transaction effects to get the Position NFT ID
+
+### Solution
+**Parse transaction effects directly** to extract the Position NFT ID:
+1. After `openPositionTransactionPayload()` transaction confirms, parse `objectChanges`
+2. Find the created object with exact type match: `{VALIDATED_PACKAGE_ID}::position::Position`
+3. Use the extracted Position NFT ID directly (no waiting, no querying)
+4. Keep fallback query logic for robustness if direct parsing fails
+
+### Security Improvements
+- **Exact type matching**: Prevents false positives from malicious contracts
+- **Package ID validation**: Only accepts Position NFTs from the verified Cetus package
+- **Undefined checks**: Logs warnings for unexpected transaction structures
+- **Defense in depth**: Multiple layers of validation before accepting a Position NFT
+
 ### Our ZAP Implementation Approach
 
 Given the problem statement requirement to use "ZAP support only" and avoid manual calculations, we implemented a **simplified ZAP-like approach** that:
