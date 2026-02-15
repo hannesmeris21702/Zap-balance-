@@ -2,6 +2,38 @@
 
 All notable changes to the Cetus CLMM Rebalance Bot project.
 
+## [1.1.0] - 2026-02-15
+
+### Added - MAINNET SAFE TEST MODE
+- New `MAINNET_TEST_MODE` environment variable for single-shot testing
+- Safe testing on mainnet with real transactions
+- Processes ONLY ONE position per run
+- Executes ONLY ONE rebalance cycle
+- Exits immediately after completion
+- Aborts immediately on any error
+- Enhanced logging with test mode indicators:
+  - 🧪 "Starting MAINNET SAFE TEST MODE..."
+  - ✓ "MAINNET TEST: position IN_RANGE"
+  - ⚠️ "MAINNET TEST: position OUT_OF_RANGE"
+  - ✅ "MAINNET TEST SUCCESS" + new position ID
+  - ❌ "MAINNET TEST FAILED" + error details
+- Exit code handling (0 = success, 1 = failure)
+- Comprehensive user guide (MAINNET_TEST_MODE.md)
+- README section with usage examples
+
+### Changed
+- `zapAndAddLiquidity()` now returns new position ID (string | null)
+- `rebalance()` method handles both test mode and normal mode
+- `start()` method detects and handles test mode
+- Constructor initializes `isTestMode` property
+- Main implementation now 503 lines (was 445 lines)
+
+### Documentation
+- Updated README.md with MAINNET SAFE TEST MODE section
+- Created MAINNET_TEST_MODE.md user guide
+- Added .env.example documentation for test mode
+- Updated CHANGELOG.md with v1.1.0 changes
+
 ## [1.0.0] - 2026-02-15
 
 ### Added
@@ -46,14 +78,16 @@ All notable changes to the Cetus CLMM Rebalance Bot project.
 ```
 .
 ├── src/
-│   └── index.ts           # Main bot implementation
-├── .env.example           # Environment configuration template
-├── .gitignore            # Git ignore rules
-├── package.json          # Project dependencies
-├── tsconfig.json         # TypeScript configuration
-├── README.md             # Setup and usage guide
-├── ZAP_IMPLEMENTATION.md # Technical ZAP notes
-└── CHANGELOG.md          # This file
+│   └── index.ts                  # Main bot implementation (503 lines)
+├── .env.example                  # Environment configuration template
+├── .gitignore                   # Git ignore rules
+├── package.json                 # Project dependencies
+├── tsconfig.json                # TypeScript configuration
+├── README.md                    # Setup and usage guide
+├── MAINNET_TEST_MODE.md         # Test mode user guide
+├── ZAP_IMPLEMENTATION.md        # Technical ZAP notes
+├── IMPLEMENTATION_SUMMARY.md    # Complete implementation details
+└── CHANGELOG.md                 # This file
 ```
 
 ## Future Enhancements (Not in Scope)
