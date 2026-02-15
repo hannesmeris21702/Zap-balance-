@@ -586,22 +586,24 @@ class CetusRebalanceBot {
         );
         
         // Filter positions by exact tick_lower and tick_upper from config
+        // Also verify pool ID to ensure correct position if wallet has multiple positions with identical ticks
         const matchingPositions = ownedPositions.filter(
           (pos: any) => 
+            pos.pool === poolInfo.poolId &&
             pos.tick_lower_index === tickLower &&
             pos.tick_upper_index === tickUpper
         );
         
         if (matchingPositions.length > 0) {
-          // Sort by position object ID to select the newest position
+          // Sort by position object ID in ascending order to select the newest position
           // In Sui, object IDs are deterministically generated and newer objects
-          // have lexicographically higher IDs. This ensures we select the position
-          // that was just created rather than an older one with the same parameters.
+          // have lexicographically higher IDs. After sorting in ascending order,
+          // the newest position (highest ID) is at the end of the array.
           matchingPositions.sort((a: any, b: any) => {
             return a.pos_object_id.localeCompare(b.pos_object_id);
           });
           
-          // Set POSITION_ID from the new position
+          // Set POSITION_ID from the new position (last element = newest)
           newPositionId = matchingPositions[matchingPositions.length - 1].pos_object_id;
           console.log(`✓ Position NFT found: ${newPositionId}`);
           console.log(`  Pool: ${poolInfo.poolId}`);
