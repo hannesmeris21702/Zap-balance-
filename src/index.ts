@@ -582,7 +582,8 @@ class CetusRebalanceBot {
       
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         if (attempt > 1) {
-          const delayMs = baseDelayMs * Math.pow(2, attempt - 1); // Exponential backoff: 1s, 2s, 4s, 8s, 16s
+          // Exponential backoff for retry attempts 2-5: 1s, 2s, 4s, 8s, 16s
+          const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
           console.log(`Retry attempt ${attempt}/${maxRetries} after ${delayMs}ms...`);
           await new Promise(resolve => setTimeout(resolve, delayMs));
         } else {
@@ -603,10 +604,11 @@ class CetusRebalanceBot {
           );
           
           if (matchingPositions.length > 0) {
-            // Sort by position ID (higher IDs are typically newer in Sui)
-            // This ensures we get the most recently created position
+            // Sort by position object ID to select the newest position
+            // In Sui, object IDs are deterministically generated and newer objects
+            // have lexicographically higher IDs. This ensures we select the position
+            // that was just created rather than an older one with the same parameters.
             matchingPositions.sort((a: any, b: any) => {
-              // Compare position object IDs - newer objects typically have higher IDs
               return a.pos_object_id.localeCompare(b.pos_object_id);
             });
             
