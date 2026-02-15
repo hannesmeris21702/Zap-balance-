@@ -99,6 +99,10 @@ class CetusRebalanceBot {
       swapCountUrl: 'https://api-sui.cetus.zone/v2/sui/swap/count',
     };
     this.sdk = new CetusClmmSDK(sdkOptions);
+    
+    // Set senderAddress to match the wallet address used for signing
+    // This is required for closePosition and other SDK operations to work correctly
+    this.sdk.senderAddress = this.walletAddress;
 
     console.log(`Bot initialized for wallet: ${this.walletAddress}`);
     if (this.isTestMode) {
